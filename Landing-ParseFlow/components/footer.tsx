@@ -22,7 +22,7 @@ export function Footer() {
               <span className="font-black text-xl">ParseFlow</span>
             </div>
             <p className="text-background/70 text-sm">
-              AI-powered bank statement extraction for modern businesses.
+              ParseFlow – AI-powered document classification system
             </p>
           </div>
 

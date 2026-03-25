@@ -123,3 +123,29 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Subtle faint grid on light backgrounds to give a designed look */
+/* Subtle faint grid on light backgrounds to give a designed look */
+.bg-background,
+.bg-card,
+.bg-popover,
+.bg-muted,
+.bg-sidebar,
+.bg-white {
+  background-image: 
+    linear-gradient(to right, rgba(0,0,0,0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0,0,0,0.045) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-repeat: repeat;
+  background-position: 0 0;
+}
+
+/* Disable the grid in dark mode */
+.dark .bg-background,
+.dark .bg-card,
+.dark .bg-popover,
+.dark .bg-muted,
+.dark .bg-sidebar,
+.dark .bg-white {
+  background-image: none;
+}

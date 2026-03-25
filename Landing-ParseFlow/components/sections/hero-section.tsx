@@ -16,15 +16,13 @@ export function HeroSection() {
           transition={{ duration: 0.6, delay: 0.2 }}
         >
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-black leading-tight text-balance">
-            Turn Bank Statements into{" "}
-            <span className="bg-primary px-2 inline-block -rotate-1">Smart Insights</span>
+            Instantly Classify Documents with AI
           </h1>
           <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-lg">
-            Upload any bank statement. Get structured, actionable data in seconds. 
-            No more manual entry. No more errors.
+            Upload any document and let ParseFlow identify its type in seconds with high accuracy.
           </p>
           <div className="mt-8 flex flex-col sm:flex-row gap-4">
-            <BrutalButton size="lg">Try It Now</BrutalButton>
+            <BrutalButton size="lg">Try Classification</BrutalButton>
             <BrutalButton variant="outline" size="lg">See How It Works</BrutalButton>
           </div>
           <div className="mt-8 flex items-center gap-6 text-sm text-muted-foreground">
@@ -54,8 +52,8 @@ export function HeroSection() {
               transition={{ duration: 0.2 }}
             >
               <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="font-bold">Drop your statement here</p>
-              <p className="text-sm text-muted-foreground mt-1">PDF, CSV, or image files</p>
+              <p className="font-bold">Drop your document here</p>
+              <p className="text-sm text-muted-foreground mt-1">PDF or image files</p>
             </motion.div>
 
             {/* Processing Preview */}
@@ -67,7 +65,7 @@ export function HeroSection() {
                 transition={{ delay: 0.8 }}
               >
                 <FileText className="w-5 h-5" />
-                <span className="flex-1 font-medium">bank_statement_march.pdf</span>
+                <span className="flex-1 font-medium">invoice_april.pdf</span>
                 <span className="text-sm text-green-600 font-bold">Processed</span>
               </motion.div>
               <motion.div 
@@ -77,7 +75,7 @@ export function HeroSection() {
                 transition={{ delay: 1 }}
               >
                 <Sparkles className="w-5 h-5 text-primary" />
-                <span className="flex-1 font-medium">142 transactions extracted</span>
+                <span className="flex-1 font-medium">AI predicts: Invoice — 92% confidence</span>
                 <span className="text-sm font-bold">View →</span>
               </motion.div>
             </div>

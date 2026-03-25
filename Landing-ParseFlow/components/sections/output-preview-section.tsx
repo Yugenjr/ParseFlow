@@ -6,11 +6,9 @@ import { TrendingUp, TrendingDown } from "lucide-react"
 import { SectionWrapper } from "../section-wrapper"
 
 const transactions = [
-  { date: "Mar 15", description: "Amazon Purchase", category: "Shopping", amount: -89.99 },
-  { date: "Mar 14", description: "Salary Deposit", category: "Income", amount: 4250.00 },
-  { date: "Mar 13", description: "Netflix", category: "Subscription", amount: -15.99 },
-  { date: "Mar 12", description: "Uber Eats", category: "Food", amount: -32.50 },
-  { date: "Mar 11", description: "Transfer In", category: "Transfer", amount: 500.00 },
+  { date: "1 sec", description: "passport_scan.jpg", category: "Passport", amount: 92 },
+  { date: "1.2 sec", description: "invoice_march.pdf", category: "Invoice", amount: 88 },
+  { date: "0.9 sec", description: "pan_card.png", category: "PAN Card", amount: 95 },
 ]
 
 const insights = [
@@ -60,7 +58,7 @@ export function OutputPreviewSection() {
           OUTPUT PREVIEW
         </motion.span>
         <h2 className="text-3xl md:text-4xl font-black text-balance">
-          See Your Data, Transformed
+          Preview Classification Results
         </h2>
       </div>
 
@@ -80,10 +78,10 @@ export function OutputPreviewSection() {
             <table className="w-full">
               <thead>
                 <tr className="border-b-3 border-foreground">
-                  <th className="text-left px-4 py-3 font-black text-sm">Date</th>
-                  <th className="text-left px-4 py-3 font-black text-sm">Description</th>
-                  <th className="text-left px-4 py-3 font-black text-sm hidden sm:table-cell">Category</th>
-                  <th className="text-right px-4 py-3 font-black text-sm">Amount</th>
+                  <th className="text-left px-4 py-3 font-black text-sm">Processing</th>
+                  <th className="text-left px-4 py-3 font-black text-sm">Document</th>
+                  <th className="text-left px-4 py-3 font-black text-sm hidden sm:table-cell">Type</th>
+                  <th className="text-right px-4 py-3 font-black text-sm">Confidence</th>
                 </tr>
               </thead>
               <tbody>
@@ -101,8 +99,8 @@ export function OutputPreviewSection() {
                     <td className="px-4 py-3 hidden sm:table-cell">
                       <span className="text-xs font-bold bg-muted px-2 py-1">{tx.category}</span>
                     </td>
-                    <td className={`px-4 py-3 text-right font-bold ${tx.amount > 0 ? "text-green-600" : "text-foreground"}`}>
-                      {tx.amount > 0 ? "+" : ""}{tx.amount.toFixed(2)}
+                    <td className={`px-4 py-3 text-right font-bold ${tx.amount >= 80 ? "text-green-600" : "text-foreground"}`}>
+                      {tx.amount}%
                     </td>
                   </motion.tr>
                 ))}
@@ -119,35 +117,34 @@ export function OutputPreviewSection() {
           viewport={{ once: true }}
           transition={{ duration: 0.5, delay: 0.2 }}
         >
-          {insights.map((insight, index) => (
-            <motion.div
-              key={insight.label}
-              className="bg-background text-foreground border-3 border-background p-4"
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.3 + index * 0.1 }}
-            >
-              <p className="text-sm text-muted-foreground mb-1">{insight.label}</p>
-              <div className="flex items-end justify-between">
-                <span className="text-2xl md:text-3xl font-black">
-                  {typeof insight.value === "number" ? (
-                    <AnimatedNumber value={insight.value} prefix="$" />
-                  ) : (
-                    insight.value
-                  )}
-                </span>
-                <span className={`flex items-center gap-1 text-sm font-bold ${
-                  insight.change.startsWith("+") ? "text-green-600" : 
-                  insight.change.startsWith("-") ? "text-destructive" : "text-muted-foreground"
-                }`}>
-                  {insight.change.startsWith("+") ? <TrendingUp className="w-4 h-4" /> : 
-                   insight.change.startsWith("-") ? <TrendingDown className="w-4 h-4" /> : null}
-                  {insight.change}
-                </span>
-              </div>
-            </motion.div>
-          ))}
+          <motion.div className="bg-background text-foreground border-3 border-background p-4">
+            <p className="text-sm text-muted-foreground mb-1">Document Type</p>
+            <div className="flex items-end justify-between">
+              <span className="text-2xl md:text-3xl font-black">Passport</span>
+              <span className="text-sm text-muted-foreground">Sample</span>
+            </div>
+          </motion.div>
+
+          <motion.div className="bg-background text-foreground border-3 border-background p-4">
+            <p className="text-sm text-muted-foreground mb-1">Confidence Score</p>
+            <div className="flex items-end justify-between">
+              <span className="text-2xl md:text-3xl font-black">92%</span>
+              <span className="text-sm text-green-600 font-bold">High</span>
+            </div>
+          </motion.div>
+
+          <motion.div className="bg-background text-foreground border-3 border-background p-4">
+            <p className="text-sm text-muted-foreground mb-1">Processing Time</p>
+            <div className="flex items-end justify-between">
+              <span className="text-2xl md:text-3xl font-black">1 sec</span>
+              <span className="text-sm text-muted-foreground">per document</span>
+            </div>
+          </motion.div>
+
+          <motion.div className="bg-background text-foreground border-3 border-background p-4">
+            <p className="text-sm text-muted-foreground mb-1">Extracted Text Preview</p>
+            <div className="text-sm text-muted-foreground">John Doe\nPassport No: XXXXXX\nDOB: 01/01/1980</div>
+          </motion.div>
         </motion.div>
       </div>
     </SectionWrapper>
