@@ -1,25 +1,32 @@
-# **Data Extractor: Bank Statement to Spreadsheet & CoA**
+# **Doc Classifier – Intelligent Document Classification System**
 
 ## **1. Problem Statement**
-Businesses and accountants often receive bank statements in formats such as PDFs or scanned images. Extracting transaction details from these documents manually and converting them into spreadsheets is time-consuming and prone to errors.
+Organizations receive many documents every day such as identity proofs, financial statements, agreements, tax documents, and compliance records. Manually identifying and sorting these documents is slow, error-prone, and requires human effort. This creates delays in processing, compliance checks, and data management.
 
-The goal of this project is to build an automated Data Extractor that can read bank statements from PDFs or images, extract transaction details, and convert them into structured spreadsheet data suitable for accounting and financial analysis.
+The goal of this project is to build an intelligent system that can automatically analyze uploaded documents and classify them into the correct document category.
 
-## **2. Solution Overview**
-The Bank Statement Data Extractor is an intelligent system that processes bank statements and converts unstructured financial data into structured spreadsheets.
+## **2. Requirement**
+Doc Classifier is an AI-powered system that automatically detects the type of a document after it is uploaded. The system reads the document content, analyzes patterns, and classifies it into the correct category.
 
-The system extracts key information such as transaction date, description, debit, credit, and balance, and automatically maps transactions to the appropriate Chart of Accounts (CoA) categories. It can also generate summaries, trends, and financial insights to assist accounting workflows.
+**Example document categories include:**
+- Identity Proofs (Aadhaar, PAN, Passport, etc.)  
+- Financial Documents (Bank Statements, Invoices, Receipts)  
+- Legal Agreements  
+- Compliance Documents  
+- Tax Documents  
+- Business Registration Documents  
 
 ## **3. Key Features**
-- Automatic extraction of bank statement transactions from PDFs or images  
-- Conversion of extracted data into structured spreadsheet format  
-- Automatic mapping of transactions to Chart of Accounts (CoA)  
-- Calculation of financial summaries and totals  
-- Generation of transaction trends and insights  
+- Automatic document type detection  
+- Support for multiple document formats (PDF, Images)  
+- Fast classification using AI models  
+- Easy document upload interface  
+- Secure and scalable architecture  
+- API integration for enterprise systems  
 
 ## **4. How the System Works**
-1. The user uploads a bank statement (PDF or image).  
-2. The system extracts transaction data using document processing techniques.  
-3. Extracted data is structured into spreadsheet format.  
-4. Transactions are automatically categorized using the Chart of Accounts (CoA).  
-5. The system generates summaries and financial insights.  
+1. The user uploads a document through the web interface.  
+2. The backend extracts text from the document.  
+3. AI models analyze the content and identify patterns.  
+4. The system predicts the most likely document category.  
+5. The classified document is stored and shown to the user.  
