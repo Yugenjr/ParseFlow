@@ -1,28 +1,16 @@
 import os
 import sys
-from services import classifier
-
-
-def default_variations():
-    # Test normalization on/off and RGB/BGR channel orders
-    vars = []
-    for normalize in (True, False):
-        for channel in ('RGB', 'BGR'):
-            vars.append({'normalize': normalize, 'channel_order': channel, 'debug': True})
-    return vars
+from app.services import classifier
 
 
 def run_on_paths(paths):
-    variations = default_variations()
     for p in paths:
         print('\n=== Image:', p)
         if not os.path.exists(p):
             print('  (missing)')
             continue
-        results = classifier.run_variations(p, variations)
-        for r in results:
-            var = r['variation']
-            print(f"  var(normalize={var['normalize']}, channel={var['channel_order']}) -> {r['label']} ({r['confidence']:.4f})")
+        label, confidence, probs = classifier.predict_image(p, debug=True)
+        print(f"  result -> {label} ({confidence:.4f})")
 
 
 def gather_images(arg_paths):

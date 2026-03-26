@@ -43,40 +43,18 @@ def load_resources():
     _CLASSNAMES = np.asarray(_CLASSNAMES).ravel().astype(str)
 
 
-def preprocess_image(image_path: str,
-                     target_size: tuple = (128, 128),
-                     normalize: bool = True,
-                     channel_order: str = 'RGB',
-                     resize_mode: str = 'bilinear') -> np.ndarray:
-    """Load and preprocess image.
+def preprocess_image(image_path: str) -> np.ndarray:
+    """Load and preprocess image using the fixed production pipeline.
 
-    Parameters:
-      - image_path: path to image
-      - target_size: (W,H)
-      - normalize: True to divide by 255.0
-      - channel_order: 'RGB' or 'BGR'
-      - resize_mode: 'bilinear'|'nearest'|'bicubic'
-
-    Returns: numpy array with shape (1,H,W,3)
+    Fixed rules (do NOT change):
+      - convert to RGB
+      - resize to 128x128
+      - do NOT normalize (keep raw 0-255 values)
+      - return array with shape (1,128,128,3) dtype float32
     """
     img = Image.open(image_path).convert('RGB')
-
-    resample_map = {
-        'nearest': Image.NEAREST,
-        'bilinear': Image.BILINEAR,
-        'bicubic': Image.BICUBIC,
-    }
-    resample = resample_map.get(resize_mode, Image.BILINEAR)
-
-    img = img.resize(target_size, resample=resample)
+    img = img.resize((128, 128), resample=Image.BILINEAR)
     arr = np.asarray(img, dtype=np.float32)
-
-    if channel_order.upper() == 'BGR':
-        arr = arr[..., ::-1]
-
-    if normalize:
-        arr = arr / 255.0
-
     if arr.ndim == 3:
         arr = np.expand_dims(arr, axis=0)
     return arr
@@ -125,53 +103,21 @@ def predict_array(x: np.ndarray, threshold: float = 0.0, debug: bool = False) ->
     return label, confidence, probs.tolist()
 
 
-def predict_image(image_path: str,
-                  normalize: bool = True,
-                  channel_order: str = 'RGB',
-                  resize_mode: str = 'bilinear',
-                  target_size: tuple = (128, 128),
-                  threshold: float = 0.0,
-                  debug: bool = False) -> (str, float, List[float]):
-    """Preprocess image and predict. See `preprocess_image` for options."""
-    x = preprocess_image(image_path, target_size=target_size, normalize=normalize,
-                         channel_order=channel_order, resize_mode=resize_mode)
+def predict_image(image_path: str, threshold: float = 0.0, debug: bool = False) -> (str, float, List[float]):
+    """Preprocess image with fixed pipeline and predict."""
+    x = preprocess_image(image_path)
     return predict_array(x, threshold=threshold, debug=debug)
 
 
-def run_variations(image_path: str, variations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Run multiple preprocessing variations and return results.
-
-    `variations` is a list of dicts with keys accepted by `predict_image` (normalize, channel_order, etc.).
-    Returns list of results with keys: variation, label, confidence, probs
-    """
-    results = []
-    for var in variations:
-        opts = dict(
-            normalize=var.get('normalize', True),
-            channel_order=var.get('channel_order', 'RGB'),
-            resize_mode=var.get('resize_mode', 'bilinear'),
-            target_size=var.get('target_size', (128, 128)),
-            threshold=var.get('threshold', 0.0),
-            debug=var.get('debug', False),
-        )
-        label, confidence, probs = predict_image(image_path, **opts)
-        results.append({'variation': opts, 'label': label, 'confidence': confidence, 'probs': probs})
-    return results
+# Variations and channel switching removed to enforce a single deterministic pipeline.
 
 
-__all__ = ['predict_image', 'predict_array', 'preprocess_image', 'run_variations', 'load_resources']
+__all__ = ['predict_image', 'predict_array', 'preprocess_image', 'load_resources']
 
 
 def _default_variations():
-    """Return default variations used by the CLI/debug harness.
-
-    Tests normalization on/off and RGB/BGR channel orders with debug enabled.
-    """
-    vars = []
-    for normalize in (True, False):
-        for channel in ('RGB', 'BGR'):
-            vars.append({'normalize': normalize, 'channel_order': channel, 'debug': True})
-    return vars
+    # Deprecated: variations removed. Keep a single deterministic pipeline.
+    return []
 
 
 def _gather_images(arg_paths):
@@ -189,10 +135,8 @@ def _gather_images(arg_paths):
 def _cli_main(argv=None):
     import argparse
 
-    parser = argparse.ArgumentParser(description='Classifier debug CLI - runs preprocessing variations')
+    parser = argparse.ArgumentParser(description='Classifier CLI - runs classifier on provided images')
     parser.add_argument('paths', nargs='*', help='Image files or directories (defaults to ml-service/test.jpg)')
-    parser.add_argument('--target-size', type=int, nargs=2, metavar=('W', 'H'), default=(128, 128),
-                        help='Target size to resize images to')
     args = parser.parse_args(argv)
 
     base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -203,26 +147,13 @@ def _cli_main(argv=None):
     else:
         paths = _gather_images(args.paths)
 
-    variations = _default_variations()
-
     for p in paths:
         print('\n=== Image:', p)
         if not os.path.exists(p):
             print('  (missing)')
             continue
-        # Use target size from CLI for each variation
-        for var in variations:
-            var_opts = dict(var)
-            var_opts['target_size'] = tuple(args.target_size)
-            # call predict_image which will print debug info when debug=True
-            label, confidence, probs = predict_image(p,
-                                                    normalize=var_opts.get('normalize', True),
-                                                    channel_order=var_opts.get('channel_order', 'RGB'),
-                                                    resize_mode=var_opts.get('resize_mode', 'bilinear'),
-                                                    target_size=var_opts.get('target_size', (128, 128)),
-                                                    threshold=var_opts.get('threshold', 0.0),
-                                                    debug=var_opts.get('debug', False))
-            print(f"  var(normalize={var_opts.get('normalize')}, channel={var_opts.get('channel_order')}) -> {label} ({confidence:.4f})")
+        label, confidence, probs = predict_image(p, debug=True)
+        print(f"  result -> {label} ({confidence:.4f})")
 
 
 if __name__ == '__main__':
