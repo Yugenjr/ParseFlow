@@ -6,6 +6,8 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { analyzeWithLLM } = require('./services/llmService');
+const { analyzeImageWithLLM } = require('./services/visionLLM');
+const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
 
 const app = express();
 app.use(cors());
@@ -16,7 +18,58 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+const createCleanup = require('./services/cleanupService');
+const cleanup = createCleanup({ uploadsDir: UPLOADS_DIR, intervalMs: 60000 });
+
 const upload = multer({ dest: UPLOADS_DIR });
+
+// Robust file mover: try rename, retry on transient errors, fallback to copy+unlink
+async function safeMoveFile(src, dest) {
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await fs.promises.rename(src, dest);
+      return;
+    } catch (err) {
+      // If it's a transient or cross-device error, try copy+unlink
+      if (err && (err.code === 'EXDEV' || err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES')) {
+        try {
+          await fs.promises.copyFile(src, dest);
+          // attempt to unlink with retries, but don't fail the whole flow if unlink fails
+          let unlinked = false;
+          for (let u = 0; u < 5; u++) {
+            try {
+              await fs.promises.unlink(src);
+              unlinked = true;
+              break;
+            } catch (unlinkErr) {
+              // if last attempt, log and continue without throwing
+              if (u === 4) {
+                console.error('safeMoveFile: failed to unlink source after copy (will keep original):', src, unlinkErr && (unlinkErr.message || unlinkErr));
+                // schedule background cleanup for the leftover source
+                try { cleanup.enqueueDelete(src); } catch (e) { console.error('safeMoveFile: enqueueDelete failed', e && e.message); }
+              }
+              // small backoff
+              await new Promise(r => setTimeout(r, 100 * (u + 1)));
+            }
+          }
+          // if copy succeeded but we couldn't remove original, ensure background job exists
+          if (!unlinked) {
+            try { cleanup.enqueueDelete(src); } catch (e) { /* best-effort */ }
+          }
+          return; // success (dest has file); even if original wasn't removed, proceed
+        } catch (copyErr) {
+          if (attempt === maxRetries - 1) throw copyErr;
+          // wait a bit then retry
+          await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+          continue;
+        }
+      }
+      // non-recoverable
+      throw err;
+    }
+  }
+}
 
 const ML_SERVICE_URL = 'http://127.0.0.1:8001/predict';
 const OCR_SERVICE_URL = 'http://127.0.0.1:8002/extract';
@@ -29,24 +82,88 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'file required' });
     }
 
-    const filePath = path.resolve(req.file.path);
+    const originalPath = path.resolve(req.file.path);
+    console.log('Processing file:', originalPath);
 
-    console.log('Processing file:', filePath);
-    console.log('Calling ML API...');
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
 
-    // STEP 1: Call ML service
-    const mlResponse = await axios.post(
-      ML_SERVICE_URL,
-      { file_path: filePath },
-      { timeout: 30000 }
-    );
+    // prepare list of image paths to run ML on (single image by default)
+    let processingPaths = [originalPath];
+    let tempImages = [];
 
-    console.log('ML Success:', mlResponse.data);
+    if (ext === '.pdf') {
+      console.log('PDF detected → converting to images (up to 3 pages)');
+      const imgs = await convertPdfToImages(originalPath, 3);
+      if (imgs && imgs.length > 0) {
+        processingPaths = imgs.map(p => path.resolve(p));
+        tempImages = imgs.slice();
+      } else {
+        console.log('PDF conversion produced no images; falling back to original file');
+      }
+    }
 
-    const predictedClass = mlResponse.data.class || mlResponse.data['class'];
-    const confidence = parseFloat(mlResponse.data.confidence || 0);
+    console.log('Calling ML API on', processingPaths.length, 'image(s)...');
 
-    console.log('ML Prediction:', predictedClass, 'Confidence:', confidence);
+    // STEP 1: Call ML service on up to first 3 images
+    let bestMl = null;
+    for (const p of processingPaths) {
+      try {
+        const mlResponse = await axios.post(
+          ML_SERVICE_URL,
+          { file_path: p },
+          { timeout: 30000 }
+        );
+        console.log('ML Success for', p, mlResponse.data);
+        const predictedClass = mlResponse.data.class || mlResponse.data['class'];
+        const confidence = parseFloat(mlResponse.data.confidence || 0);
+        if (!bestMl || confidence > bestMl.confidence) {
+          bestMl = { predictedClass, confidence, file: p };
+        }
+        if (confidence >= CONFIDENCE_THRESHOLD) {
+          // high confidence — use this
+          console.log('ML HIGH CONFIDENCE -> RETURNING ML RESULT (from page)', p);
+
+          // move original file into storage based on predicted category
+          const folder = cleanFolderName(predictedClass);
+          const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+          const targetDir = path.join(storageRoot, folder);
+          const targetPath = path.join(targetDir, req.file.originalname);
+          try {
+            if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+            await safeMoveFile(originalPath, targetPath);
+          } catch (e) {
+            console.error('Failed to move original file to storage:', e.message || e);
+            try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
+          }
+
+          // cleanup temp images if any (try immediate cleanup, otherwise schedule background deletes)
+          cleanupFiles(tempImages);
+          for (const img of tempImages) {
+            try {
+              if (fs.existsSync(img)) cleanup.enqueueDelete(img);
+            } catch (e) {
+              console.error('enqueueDelete failed for', img, e && e.message);
+            }
+          }
+
+          return res.json({
+            filename: req.file.originalname,
+            result: {
+              document_type: predictedClass || 'Unknown',
+              folder,
+              confidence,
+              method: 'ML'
+            }
+          });
+        }
+      } catch (e) {
+        console.error('ML request failed for', p, e?.response?.data || e.message || e);
+      }
+    }
+
+    // If any ML produced a best score >= threshold we would have returned.
+    // If we have a bestMl but below threshold, we'll fallback to Vision LLM.
+    if (bestMl) console.log('Best ML result:', bestMl.predictedClass, bestMl.confidence);
 
     // helper: check if predicted class is an identity-type
     function isIdentityClass(cls) {
@@ -81,65 +198,90 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       return null;
     }
 
-    // STEP 2: Decision
-    if (confidence >= CONFIDENCE_THRESHOLD) {
-      console.log('ML HIGH CONFIDENCE -> RETURNING ML RESULT');
-      // attempt to infer document name from filename (e.g., Aadhaar/PAN patterns)
-      const inferred = inferIdFromFilename(req.file.originalname) || inferIdFromFilename(path.basename(filePath));
-      const document_name = inferred || String(predictedClass || 'Unknown');
-      const folder = cleanFolderName(predictedClass);
+    // If PDF conversion failed (no images produced) and the original file is a PDF,
+    // fall back to OCR + text LLM path.
+    if (ext === '.pdf' && tempImages.length === 0) {
+      console.log('PDF conversion failed — falling back to OCR + LLM');
+      try {
+        const ocrResponse = await axios.post(
+          OCR_SERVICE_URL,
+          { file_path: originalPath },
+          { timeout: 30000 }
+        );
+        const extractedText = (ocrResponse.data && ocrResponse.data.text) ? String(ocrResponse.data.text).slice(0, 3000) : '';
+        console.log('OCR TEXT PREVIEW:', extractedText.slice(0, 200));
+        const llmResult = await analyzeWithLLM(extractedText || '');
 
-      return res.json({
-        filename: req.file.originalname,
-        result: {
-          document_name: document_name,
-          document_type: predictedClass || 'Unknown',
-          folder: folder,
-          confidence,
-          method: 'ML'
+        // move original file into storage based on LLM category/folder if provided
+        try {
+          const folder = (llmResult && llmResult.folder) ? llmResult.folder : cleanFolderName(llmResult && llmResult.document_type);
+          const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+          const targetDir = path.join(storageRoot, folder);
+          if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+          const targetPath = path.join(targetDir, req.file.originalname);
+          try {
+            fs.renameSync(originalPath, targetPath);
+          } catch (e) {
+            console.error('Failed to move original file to storage (renameSync):', e.message || e);
+            try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
+          }
+        } catch (e) {
+          console.error('Storage move error:', e.message || e);
         }
-      });
+
+        return res.json({
+          filename: req.file.originalname,
+          result: {
+            ...(llmResult || {}),
+            method: 'OCR + LLM'
+          }
+        });
+      } catch (e) {
+        console.error('OCR fallback failed:', e?.response?.data || e.message || e);
+        // continue to Vision LLM below as last resort
+      }
     }
 
-    console.log('ML LOW CONFIDENCE -> SWITCHING TO OCR + LLM');
+    console.log('ML LOW CONFIDENCE -> USING VISION LLM on first page');
 
-    // STEP 3: OCR
-    const ocrResponse = await axios.post(
-      OCR_SERVICE_URL,
-      { file_path: filePath },
-      { timeout: 30000 }
-    );
+    // STEP 3: Vision LLM (multimodal) — use first processing path (first page)
+    const visionInput = processingPaths[0] || originalPath;
+    const llmResult = await analyzeImageWithLLM(visionInput);
 
-    const extractedText = (ocrResponse.data && ocrResponse.data.text) ? String(ocrResponse.data.text).slice(0, 3000) : '';
-
-    console.log('OCR TEXT PREVIEW:', extractedText.slice(0, 200));
-
-    // STEP 4: LLM Analysis
-    const llmResult = await analyzeWithLLM(extractedText || '');
-
-    // For OCR+LLM path: prefer to return only document_type, but include document_name if LLM found an id
-    const docType = llmResult && llmResult.document_type ? llmResult.document_type : 'Unknown';
-    let document_name = null;
+    // move original file into storage based on LLM category/folder if provided
     try {
-      if (llmResult && llmResult.key_fields && llmResult.key_fields.id_number) {
-        document_name = llmResult.key_fields.id_number;
-      } else if (llmResult && llmResult.key_fields && llmResult.key_fields.name) {
-        document_name = llmResult.key_fields.name;
+      const folder = (llmResult && llmResult.folder) ? llmResult.folder : cleanFolderName(llmResult && llmResult.document_type);
+      const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+      const targetDir = path.join(storageRoot, folder);
+      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+      const targetPath = path.join(targetDir, req.file.originalname);
+      try {
+        await safeMoveFile(originalPath, targetPath);
+      } catch (e) {
+        console.error('Failed to move original file to storage:', e.message || e);
+        try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
       }
     } catch (e) {
-      document_name = null;
+      console.error('Storage move error:', e.message || e);
     }
 
-    const resp = {
+    // cleanup temp images (immediate and schedule retries if any remain)
+    cleanupFiles(tempImages);
+    for (const img of tempImages) {
+      try {
+        if (fs.existsSync(img)) cleanup.enqueueDelete(img);
+      } catch (e) {
+        console.error('enqueueDelete failed for', img, e && e.message);
+      }
+    }
+
+    return res.json({
       filename: req.file.originalname,
       result: {
-        document_type: docType,
-        method: 'OCR + LLM'
+        ...(llmResult || {}),
+        method: 'Vision LLM'
       }
-    };
-    if (document_name) resp.result.document_name = document_name;
-
-    return res.json(resp);
+    });
 
   } catch (err) {
     console.error(err?.response?.data || err.message || err);
@@ -151,4 +293,5 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
 app.listen(5000, () => {
   console.log('Backend running on port 5000');
+  try { cleanup.start(); } catch (e) { console.error('cleanup start failed', e && e.message); }
 });

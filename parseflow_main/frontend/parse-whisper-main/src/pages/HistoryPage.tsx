@@ -1,0 +1,106 @@
+import { Search, FileText, Check, AlertTriangle, X } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useEffect, useState } from "react";
+import { getDocsByUser, type Document } from "@/lib/indexeddb";
+
+function timeAgo(ts: string): string {
+  const diff = Date.now() - new Date(ts).getTime();
+  const hours = Math.floor(diff / 3600000);
+  if (hours < 1) return 'just now';
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+const filters = ["All", "Identity", "Financial", "Legal", "Compliance", "Tax", "Business"];
+
+const statusIcon: Record<string, React.ReactNode> = {
+  success: <Check className="h-4 w-4 text-success" />,
+  warning: <AlertTriangle className="h-4 w-4 text-warning" />,
+  error: <X className="h-4 w-4 text-destructive" />,
+};
+
+export default function HistoryPage() {
+  const { user } = useAuth();
+  const [docs, setDocs] = useState<Document[]>([]);
+  const [filter, setFilter] = useState("All");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    if (user) getDocsByUser(user.id).then(d => setDocs(d.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())));
+  }, [user]);
+
+  const filtered = docs
+    .filter(d => filter === "All" || d.category === filter)
+    .filter(d => !search || d.filename.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="space-y-6 max-w-4xl">
+      <h2 className="font-heading text-3xl text-foreground tracking-wider">HISTORY</h2>
+
+      {/* Search & Filters */}
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search history..."
+            className="w-full h-11 pl-10 pr-4 bg-card border border-border rounded-sm font-body text-sm text-foreground focus:outline-none focus:border-primary transition-colors duration-200"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {filters.map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-3 py-1.5 rounded-sm font-mono text-[10px] uppercase tracking-wider transition-all duration-200 ${
+                filter === f ? "gradient-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Timeline */}
+      <div className="space-y-2">
+        {filtered.length === 0 ? (
+          <div className="card-brutal text-center py-8">
+            <p className="font-heading text-2xl text-muted-foreground">NO RESULTS</p>
+          </div>
+        ) : (
+          filtered.map((item) => (
+            <div key={item.id} className="card-brutal card-brutal-hover flex items-center gap-4">
+              <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0 text-lg">
+                {item.thumbnail}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-body text-sm font-medium text-foreground truncate">{item.filename}</p>
+                <p className="font-mono text-[10px] text-muted-foreground">
+                  {item.category} · {timeAgo(item.timestamp)}
+                </p>
+              </div>
+              <div className="hidden sm:flex items-center gap-2 w-20">
+                <div className="flex-1 h-2 bg-muted rounded-sm overflow-hidden">
+                  <div
+                    className={`h-full rounded-sm ${item.confidence > 85 ? 'bg-success' : item.confidence > 60 ? 'bg-warning' : 'bg-destructive'}`}
+                    style={{ width: `${item.confidence}%` }}
+                  />
+                </div>
+                <span className="font-mono text-[10px] text-muted-foreground">{item.confidence}%</span>
+              </div>
+              <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary">{item.source}</span>
+              {statusIcon[item.status]}
+            </div>
+          ))
+        )}
+      </div>
+
+      <button className="w-full py-3 font-mono text-xs text-primary hover:underline uppercase tracking-wider">
+        LOAD MORE
+      </button>
+    </div>
+  );
+}

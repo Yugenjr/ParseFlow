@@ -1,0 +1,207 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=Montserrat:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 250 20% 98%;
+    --foreground: 0 0% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 12%;
+
+    --primary: 253 91% 64%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 253 100% 94%;
+    --secondary-foreground: 253 91% 50%;
+
+    --muted: 0 0% 92%;
+    --muted-foreground: 0 0% 45%;
+
+    --accent: 197 89% 65%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 253 40% 90%;
+    --input: 253 40% 90%;
+    --ring: 253 91% 64%;
+
+    --radius: 0.25rem;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 0 0% 12%;
+    --sidebar-primary: 253 91% 64%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 253 100% 94%;
+    --sidebar-accent-foreground: 253 91% 50%;
+    --sidebar-border: 253 40% 90%;
+    --sidebar-ring: 253 91% 64%;
+
+    --gradient-primary: linear-gradient(90deg, hsl(253 91% 64%), hsl(197 100% 50%));
+    --gradient-primary-hover: linear-gradient(90deg, hsl(253 91% 54%), hsl(197 100% 44%));
+    --sky-blue: 197 89% 65%;
+    --deep-sky: 197 100% 50%;
+    --lavender: 261 100% 76%;
+    --pale-purple: 253 100% 94%;
+    --success: 142 71% 45%;
+    --warning: 38 92% 50%;
+
+    --shadow-card: 0 2px 8px rgba(115, 83, 246, 0.1);
+    --shadow-card-hover: 0 4px 12px rgba(115, 83, 246, 0.16);
+
+    --font-heading: 'Bebas Neue', cursive;
+    --font-body: 'Montserrat', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+  }
+
+  .dark {
+    --background: 0 0% 11%;
+    --foreground: 0 0% 95%;
+
+    --card: 0 0% 15%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 0 0% 15%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 253 91% 64%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 253 30% 20%;
+    --secondary-foreground: 253 100% 85%;
+
+    --muted: 0 0% 20%;
+    --muted-foreground: 0 0% 60%;
+
+    --accent: 197 89% 65%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 95%;
+
+    --border: 0 0% 22%;
+    --input: 0 0% 22%;
+    --ring: 253 91% 64%;
+
+    --sidebar-background: 0 0% 13%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 253 91% 64%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 253 30% 20%;
+    --sidebar-accent-foreground: 253 100% 85%;
+    --sidebar-border: 0 0% 22%;
+    --sidebar-ring: 253 91% 64%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    font-size: 16px;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+}
+
+@layer utilities {
+  .gradient-primary {
+    background: var(--gradient-primary);
+  }
+
+  .gradient-primary-hover:hover {
+    background: var(--gradient-primary-hover);
+  }
+
+  .card-brutal {
+    @apply bg-card border border-border p-5;
+    border-radius: 4px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .card-brutal-hover {
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+  }
+
+  .card-brutal-hover:hover {
+    @apply border-primary;
+    border-width: 2px;
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+
+  .card-shadow {
+    box-shadow: var(--shadow-card);
+  }
+
+  .card-shadow-hover {
+    transition: box-shadow 200ms ease, transform 200ms ease;
+  }
+
+  .card-shadow-hover:hover {
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+
+  .gradient-text {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  .brutal-border {
+    @apply border-2 border-foreground;
+    border-radius: 2px;
+  }
+
+  .brutal-focus {
+    @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2;
+  }
+
+  .shimmer {
+    background: linear-gradient(90deg, transparent 0%, hsl(var(--primary) / 0.08) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.9); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.5; }
+  100% { transform: scale(0.9); opacity: 1; }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s ease-in-out infinite;
+}
+
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}

@@ -59,27 +59,37 @@ RULES:
 * If unsure → document_type = "Unknown", category = "Other".
 
 ADDITIONAL INSTRUCTION:
-If you detect a clear ID number (Aadhaar/PAN/Passport/DL) populate `key_fields.id_number` with the detected value. Do not include any explanatory text.
+If you detect a clear ID number (Aadhaar/PAN/Passport/DL) populate \`key_fields.id_number\` with the detected value. Do not include any explanatory text.
 `;
 
 async function analyzeWithLLM(text) {
   try {
+    const payload = {
+      model: "llama3-70b-8192",
+      messages: [
+        {
+          role: "system",
+          content: SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: text
+        }
+      ],
+      temperature: 0.2
+    };
+
+    // DEBUG: log payload size and first chars (avoid logging very large text)
+    try {
+      console.log('LLM payload size:', String(JSON.stringify(payload).length));
+      console.log('LLM payload preview:', String(JSON.stringify(payload)).slice(0, 1000));
+    } catch (e) {
+      // ignore
+    }
+
     const response = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
-      {
-        model: "llama3-8b-8192",
-        messages: [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT
-          },
-          {
-            role: "user",
-            content: text
-          }
-        ],
-        temperature: 0.2
-      },
+      payload,
       {
         headers: {
           Authorization: `Bearer ${GROQ_API_KEY}`,
@@ -100,7 +110,17 @@ async function analyzeWithLLM(text) {
     }
 
   } catch (err) {
-    console.error("LLM ERROR:", err?.response?.data || err.message || err);
+    // Log full provider response when available
+    try {
+      if (err && err.response) {
+        console.error('LLM ERROR status:', err.response.status);
+        console.error('LLM ERROR data:', JSON.stringify(err.response.data));
+      } else {
+        console.error('LLM ERROR:', err.message || err);
+      }
+    } catch (e) {
+      console.error('LLM ERROR (fallback):', err);
+    }
     // If request failed, fall back to local heuristic parser
     try {
       return heuristicParse(text);
