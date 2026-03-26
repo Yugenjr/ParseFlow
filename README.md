@@ -62,8 +62,9 @@ Upload → Image Classifier → (Confidence Check)
 
 * Storage System
   Stores files and metadata in categorized structure
+  
+---
 
-```
 flowchart TD
 
     A[User Uploads Document] --> B[Backend Receives File]
@@ -93,7 +94,6 @@ flowchart TD
 
     O --> P[Dashboard Display\n(Table + Insights + Confidence)]
 
-```
 
 ## AI Approach
 
