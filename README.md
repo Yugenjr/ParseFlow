@@ -64,6 +64,36 @@ Upload → Image Classifier → (Confidence Check)
   Stores files and metadata in categorized structure
 
 ---
+flowchart TD
+
+    A[User Uploads Document] --> B[Backend Receives File]
+
+    B --> C[Preprocessing]
+    C --> D[Image Classification Model\n(MobileNetV2)]
+
+    D --> E{Confidence >= Threshold?}
+
+    E -- Yes --> F[Assign Category\n(Aadhaar / PAN / Passport / DL)]
+    E -- No --> G[OCR Engine\n(Tesseract)]
+
+    G --> H[Extracted Text]
+    H --> I[LLM Classification\n(Semantic Analysis)]
+
+    I --> J[Predicted Category + Confidence + Reason]
+
+    F --> K[Final Classification]
+    J --> K
+
+    K --> L[Store Document]
+    L --> M[Organize into Categories\n(Identity / Financial / Legal / Other)]
+
+    M --> N[Save Metadata\n(JSON / DB)]
+
+    N --> O[Return Result to Frontend]
+
+    O --> P[Dashboard Display\n(Table + Insights + Confidence)]
+
+---
 
 ## AI Approach
 
