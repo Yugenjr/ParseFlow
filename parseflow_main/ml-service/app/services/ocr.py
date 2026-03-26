@@ -45,19 +45,17 @@ def is_text_poor(text):
 
 
 def extract_text(image_path):
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"File not found: {image_path}")
-
-    # Step 1: EasyOCR (primary)
     text = extract_with_easyocr(image_path)
 
-    # Step 2: fallback to Tesseract if needed
     if is_text_poor(text):
-        fallback_text = extract_with_tesseract(image_path)
+        try:
+            fallback_text = extract_with_tesseract(image_path)
 
-        # choose better result
-        if len(fallback_text) > len(text):
-            return fallback_text
+            if len(fallback_text) > len(text):
+                return fallback_text
+
+        except Exception as e:
+            print("Tesseract not available, skipping fallback")
 
     return text
 
