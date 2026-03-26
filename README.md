@@ -67,32 +67,32 @@ Upload → Image Classifier → (Confidence Check)
 ```mermaid
 flowchart TD
 
-    A[User Uploads Document] --> B[Backend Receives File]
+    A["User Uploads Document"] --> B["Backend Receives File"]
 
-    B --> C[Preprocessing]
-    C --> D[Image Classification Model\n(MobileNetV2)]
+    B --> C["Preprocessing"]
+    C --> D["Image Classification Model<br>(MobileNetV2)"]
 
-    D --> E{Confidence >= Threshold?}
+    D --> E{"Confidence >= Threshold?"}
 
-    E -- Yes --> F[Assign Category\n(Aadhaar / PAN / Passport / DL)]
-    E -- No --> G[OCR Engine\n(Tesseract)]
+    E -- Yes --> F["Assign Category<br>(Aadhaar / PAN / Passport / DL)"]
+    E -- No --> G["OCR Engine<br>(Tesseract)"]
 
-    G --> H[Extracted Text]
-    H --> I[LLM Classification\n(Semantic Analysis)]
+    G --> H["Extracted Text"]
+    H --> I["LLM Classification<br>(Semantic Analysis)"]
 
-    I --> J[Predicted Category + Confidence + Reason]
+    I --> J["Predicted Category + Confidence + Reason"]
 
-    F --> K[Final Classification]
+    F --> K["Final Classification"]
     J --> K
 
-    K --> L[Store Document]
-    L --> M[Organize into Categories\n(Identity / Financial / Legal / Other)]
+    K --> L["Store Document"]
+    L --> M["Organize into Categories<br>(Identity / Financial / Legal / Other)"]
 
-    M --> N[Save Metadata\n(JSON / DB)]
+    M --> N["Save Metadata<br>(JSON / DB)"]
 
-    N --> O[Return Result to Frontend]
+    N --> O["Return Result to Frontend"]
 
-    O --> P[Dashboard Display\n(Table + Insights + Confidence)]
+    O --> P["Dashboard Display<br>(Table + Insights + Confidence)"]
 ```
 
 ## AI Approach
