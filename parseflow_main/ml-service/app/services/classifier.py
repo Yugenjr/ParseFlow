@@ -55,6 +55,8 @@ def preprocess_image(image_path: str) -> np.ndarray:
     img = Image.open(image_path).convert('RGB')
     img = img.resize((128, 128), resample=Image.BILINEAR)
     arr = np.asarray(img, dtype=np.float32)
+    # Convert RGB -> BGR to match original training channel order (higher consistency)
+    arr = arr[..., ::-1]
     if arr.ndim == 3:
         arr = np.expand_dims(arr, axis=0)
     return arr

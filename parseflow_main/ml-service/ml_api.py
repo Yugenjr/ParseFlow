@@ -32,6 +32,8 @@ def predict():
             img = Image.open(image_path).convert('RGB')
             img = img.resize((128, 128), resample=Image.BILINEAR)
             arr = np.asarray(img, dtype=np.float32)
+            # Convert RGB -> BGR to align with classifier default
+            arr = arr[..., ::-1]
             arr = np.expand_dims(arr, axis=0)
             return arr
 
