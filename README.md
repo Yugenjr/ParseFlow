@@ -64,7 +64,7 @@ Upload → Image Classifier → (Confidence Check)
   Stores files and metadata in categorized structure
   
 ---
-
+```mermaid
 flowchart TD
 
     A[User Uploads Document] --> B[Backend Receives File]
@@ -93,7 +93,7 @@ flowchart TD
     N --> O[Return Result to Frontend]
 
     O --> P[Dashboard Display\n(Table + Insights + Confidence)]
-
+```
 
 ## AI Approach
 
