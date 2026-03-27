@@ -17,7 +17,7 @@ function redactPII(text: string): string {
   return PII_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, "[REDACTED]"), text);
 }
 
-function toGroqMessages(history: GuideBotMessage[]) {
+function formatChatMessages(history: GuideBotMessage[]) {
   const trimmed = history.slice(-12);
   return trimmed.map((message) => ({
     role: message.role,
@@ -33,7 +33,7 @@ export async function askGuideBot(history: GuideBotMessage[], token: string): Pr
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
-      messages: toGroqMessages(history),
+      messages: formatChatMessages(history),
     }),
   });
 
