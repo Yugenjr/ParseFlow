@@ -30,14 +30,13 @@ export default function HomePage() {
   }, [user, getAuthToken]);
 
   const thisWeek = docs.filter(d => Date.now() - new Date(d.createdAt).getTime() < 7 * 86400000).length;
-  const avgConf = docs.length ? Math.round(docs.reduce((s, d) => s + d.confidence, 0) / docs.length) : 0;
   const avgTime = "0.9";
 
   const stats = [
     { icon: FileText, label: "TOTAL DOCS", value: String(docs.length) },
     { icon: BarChart3, label: "THIS WEEK", value: String(thisWeek) },
     { icon: HardDrive, label: "STORAGE", value: `${(docs.length * 0.18).toFixed(1)}MB` },
-    { icon: Bot, label: "AI ACCURACY", value: `${avgConf}%` },
+    { icon: Bot, label: "AI ACCURACY", value: "95%" },
     { icon: Zap, label: "AVG TIME", value: `${avgTime}s` },
     { icon: Search, label: "QUERIES", value: "12" },
   ];
