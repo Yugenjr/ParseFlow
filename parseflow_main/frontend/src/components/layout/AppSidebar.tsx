@@ -12,7 +12,6 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { DocBotSidebar } from '@/components/DocBotSidebar';
 
 const navItems = [
   { title: "Home", url: "/", icon: Home },
@@ -84,12 +83,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-          {/* DocBot (inline in sidebar) */}
-          <div className="px-2">
-            <DocBotSidebar />
-          </div>
-
-          {/* Logout */}
+        {/* Logout */}
         <div className="p-4 border-t border-border">
           <button
             onClick={handleLogout}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Volume2, VolumeX, Bot, Send, X, Loader2, Mic, MicOff } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { askGuideBot, type GuideBotMessage } from "@/lib/guidebot-api";
@@ -47,9 +47,42 @@ export function ChatPanel() {
   const [isListening, setIsListening] = useState(false);
   const [listeningHint, setListeningHint] = useState("");
   const [lastAssistantReply, setLastAssistantReply] = useState("");
+  const [buttonPos, setButtonPos] = useState({ x: 0, y: 0 });
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const transcriptBaseRef = useRef("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef({ pointerX: 0, pointerY: 0, originX: 0, originY: 0 });
+  const hasMovedRef = useRef(false);
+
+  const BUTTON_SIZE = 56;
+  const BUTTON_MARGIN = 24;
+
+  const clampButtonPosition = (x: number, y: number) => {
+    const maxX = Math.max(BUTTON_MARGIN, window.innerWidth - BUTTON_SIZE - BUTTON_MARGIN);
+    const maxY = Math.max(BUTTON_MARGIN, window.innerHeight - BUTTON_SIZE - BUTTON_MARGIN);
+    return {
+      x: Math.min(Math.max(x, BUTTON_MARGIN), maxX),
+      y: Math.min(Math.max(y, BUTTON_MARGIN), maxY),
+    };
+  };
+
+  const positionButtonBottomRight = () => {
+    setButtonPos({
+      x: Math.max(BUTTON_MARGIN, window.innerWidth - BUTTON_SIZE - BUTTON_MARGIN),
+      y: Math.max(BUTTON_MARGIN, window.innerHeight - BUTTON_SIZE - BUTTON_MARGIN),
+    });
+  };
+
+  useEffect(() => {
+    positionButtonBottomRight();
+
+    const onResize = () => {
+      setButtonPos((prev) => clampButtonPosition(prev.x, prev.y));
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     setSpeechEnabled(typeof window !== "undefined" && "speechSynthesis" in window);
@@ -138,6 +171,45 @@ export function ChatPanel() {
     }
   };
 
+  const handleTogglePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+
+    dragStartRef.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      originX: buttonPos.x,
+      originY: buttonPos.y,
+    };
+    hasMovedRef.current = false;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const dx = moveEvent.clientX - dragStartRef.current.pointerX;
+      const dy = moveEvent.clientY - dragStartRef.current.pointerY;
+
+      if (!hasMovedRef.current && Math.hypot(dx, dy) > 4) {
+        hasMovedRef.current = true;
+      }
+
+      const next = clampButtonPosition(
+        dragStartRef.current.originX + dx,
+        dragStartRef.current.originY + dy,
+      );
+      setButtonPos(next);
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+
+      if (!hasMovedRef.current) {
+        setIsOpen(true);
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
+
   const speakText = (text: string) => {
     if (!speechEnabled || !text.trim()) return;
     window.speechSynthesis.cancel();
@@ -191,8 +263,9 @@ export function ChatPanel() {
       {/* Toggle Button */}
       {!isOpen && (
         <button
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 z-50 h-14 w-14 gradient-primary rounded-sm flex items-center justify-center text-primary-foreground font-heading text-2xl shadow-card hover:opacity-90 transition-opacity duration-200"
+          onPointerDown={handleTogglePointerDown}
+          style={{ left: `${buttonPos.x}px`, top: `${buttonPos.y}px` }}
+          className="fixed z-50 h-14 w-14 gradient-primary rounded-sm flex items-center justify-center text-primary-foreground font-heading text-2xl shadow-card hover:opacity-90 transition-opacity duration-200 touch-none"
           aria-label="Open GuideBot"
         >
           <Bot className="h-7 w-7" />

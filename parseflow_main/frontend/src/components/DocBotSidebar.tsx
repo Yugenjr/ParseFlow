@@ -40,42 +40,55 @@ export function DocBotSidebar() {
 
   if (!user) return null;
 
-  return (
-    <div className="mt-4 px-4">
-      <div className="mb-2 font-mono text-xs uppercase text-muted-foreground">📄 DOCBOT</div>
-      <div className="h-40 overflow-y-auto rounded-sm border border-border bg-surface p-2">
+ return (
+<div className="mt-4 px-4 w-full max-w-2xl mx-auto h-[calc(100vh-200px)] flex flex-col">
+    
+    <div className="mb-2 font-mono text-xs uppercase text-muted-foreground">
+      📄 DOCBOT
+    </div>
+
+    {/* CHAT AREA */}
+    <div className="flex-1 rounded-sm border border-border bg-surface p-2 flex flex-col justify-end overflow-hidden">
+      
+      
+      <div className="space-y-2">
         {messages.map((m, i) => (
-          <div key={i} className={`mb-2 text-sm ${m.role === 'user' ? 'text-right' : ''}`}>
-            <div className={`inline-block max-w-full px-2 py-1 rounded-sm ${m.role === 'user' ? 'gradient-primary text-primary-foreground' : 'bg-secondary text-foreground'}`}>
+          <div key={i} className={`text-sm ${m.role === 'user' ? 'text-right' : ''}`}>
+            <div className={`inline-block max-w-full px-2 py-1 rounded-sm ${
+              m.role === 'user'
+                ? 'gradient-primary text-primary-foreground'
+                : 'bg-secondary text-foreground'
+            }`}>
               {m.text}
             </div>
           </div>
         ))}
         <div ref={bottomRef} />
       </div>
-      <div className="mt-2 flex gap-2">
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              void handleSend();
-            }
-          }}
-          placeholder="Query your vault..."
-          className="flex-1 h-8 px-2 bg-background border border-border rounded-sm text-sm"
-          disabled={isLoading}
-        />
-        <button
-          onClick={() => {
-            void handleSend();
-          }}
-          className="h-8 px-2 bg-primary text-primary-foreground rounded-sm text-sm disabled:opacity-60"
-          disabled={isLoading || !input.trim()}
-        >
-          {isLoading ? '...' : 'Ask'}
-        </button>
-      </div>
     </div>
-  );
+
+    {/* INPUT AREA */}
+    <div className="mt-2 flex gap-2">
+      <input
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            void handleSend();
+          }
+        }}
+        placeholder="Query your vault..."
+        className="flex-1 h-8 px-2 bg-background border border-border rounded-sm text-sm"
+        disabled={isLoading}
+      />
+      <button
+        onClick={() => void handleSend()}
+        className="h-8 px-2 bg-primary text-primary-foreground rounded-sm text-sm disabled:opacity-60"
+        disabled={isLoading || !input.trim()}
+      >
+        {isLoading ? '...' : 'Ask'}
+      </button>
+    </div>
+  </div>
+);
 }
