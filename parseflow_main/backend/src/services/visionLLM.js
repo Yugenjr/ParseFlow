@@ -9,6 +9,7 @@ Return STRICT JSON only. Do NOT add prose or explanation.
 
 OBJECTIVE:
 1. Perform OCR on the provided image.
+2. Return full extracted text from OCR in an "extracted_text" field.
 2. Identify the document type (Aadhaar Card, PAN Card, Passport, Driving License, Bank Statement, Invoice, Receipt, Tax Document, Legal Agreement, Business Registration, Unknown).
 3. Extract key fields when present (name, id_number, date_of_birth, document_number, issuing_authority).
 4. Assign storage category (Identity, Financial, Legal, Tax, Business, Other) and suggest folder (Category/Document_Type).
@@ -21,6 +22,7 @@ RULES:
 
 OUTPUT FORMAT (STRICT JSON ONLY):
 {
+  "extracted_text": "",
   "document_type": "",
   "category": "",
   "folder": "",
@@ -109,6 +111,7 @@ async function analyzeImageWithLLM(filePath) {
         const jsonStr = output.slice(start, end + 1);
         try {
           const parsed = JSON.parse(jsonStr);
+          parsed.extracted_text = typeof parsed.extracted_text === 'string' ? parsed.extracted_text : '';
           parsed.confidence = normalizeConfidencePercent(parsed.confidence);
           return parsed;
         } catch (e) {
@@ -119,12 +122,14 @@ async function analyzeImageWithLLM(filePath) {
 
     // If provider returned structured object already
     if (typeof output === 'object') {
+      output.extracted_text = typeof output.extracted_text === 'string' ? output.extracted_text : '';
       output.confidence = normalizeConfidencePercent(output.confidence);
       return output;
     }
 
     // Fallback
     return {
+      extracted_text: '',
       document_type: 'Unknown',
       category: 'Other',
       folder: 'Other/Unknown',
@@ -145,6 +150,7 @@ async function analyzeImageWithLLM(filePath) {
       console.error('VISION LLM ERROR fallback:', err.message || err);
     }
     return {
+      extracted_text: '',
       document_type: 'Unknown',
       category: 'Other',
       folder: 'Other/Unknown',

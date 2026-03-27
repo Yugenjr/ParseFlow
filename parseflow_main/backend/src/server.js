@@ -11,6 +11,7 @@ const User = require('./models/User');
 const Document = require('./models/Document');
 const { authMiddleware } = require('./middleware/authMiddleware');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
+const { askGuideBot } = require('./services/guidebotService');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
 
 const app = express();
@@ -84,6 +85,9 @@ async function safeMoveFile(src, dest) {
 const ML_SERVICE_URL = 'http://127.0.0.1:8001/predict';
 
 const CONFIDENCE_THRESHOLD = 0.80;
+const DOCBOT_GROQ_API_URL = process.env.DOCBOT_GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
+const DOCBOT_GROQ_MODEL = process.env.DOCBOT_GROQ_MODEL || 'llama-3.1-8b-instant';
+const DOCBOT_GROQ_API_KEY = process.env.DOCBOT_GROQ_API_KEY || process.env.GUIDEBOT_GROQ_API_KEY || process.env.GROQ_API_KEY;
 
 function normalizeConfidencePercent(value) {
   if (value === null || value === undefined) return 0;
@@ -370,6 +374,15 @@ async function persistDocumentForUser({ req, result, filePath }) {
   const docType = deriveDocType(result).replace(/\s+/g, '_');
   const fileUrl = makeFileUrl(filePath);
   const confidence = normalizeConfidencePercent(result && result.confidence);
+  const isVision = String((result && result.method) || '').toLowerCase().includes('vision');
+  const extractedText = isVision ? String((result && result.extracted_text) || '') : '';
+  const llmAnalysis = isVision
+    ? {
+      summary: String((result && result.summary) || ''),
+      key_fields: (result && result.key_fields) || {}
+    }
+    : {};
+
   return Document.create({
     userId: req.userId,
     filename: req.file.originalname,
@@ -379,6 +392,8 @@ async function persistDocumentForUser({ req, result, filePath }) {
     confidence,
     method: (result && result.method) || 'Unknown',
     metadata: (result && result.key_fields) || {},
+    extracted_text: extractedText,
+    llm_analysis: llmAnalysis,
     storage: {
       category,
       docType,
@@ -408,6 +423,103 @@ app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'User sync failed' });
+  }
+});
+
+function getDocbotFilteredDocs(question, docs) {
+  const q = String(question || '').toLowerCase();
+  if (q.includes('aadhaar') || q.includes('aadhar')) {
+    return docs.filter((doc) => String(doc.document_type || '').toLowerCase().includes('aadhaar') || String(doc.document_type || '').toLowerCase().includes('aadhar'));
+  }
+  if (q.includes('pan')) {
+    return docs.filter((doc) => String(doc.document_type || '').toLowerCase().includes('pan'));
+  }
+  return docs;
+}
+
+function buildDocbotContext(docs) {
+  const limitedDocs = docs.slice(0, 12);
+  const context = limitedDocs.map((doc) => {
+    const extracted = String(doc.extracted_text || '').slice(0, 2000);
+    const structured = JSON.stringify(doc.llm_analysis || {}).slice(0, 1000);
+    return `Document: ${doc.document_type}\nCategory: ${doc.category}\n\nExtracted Text:\n${extracted}\n\nStructured Data:\n${structured}`;
+  }).join('\n\n');
+
+  return context.slice(0, 12000);
+}
+
+async function askDocBot({ question, context }) {
+  if (!DOCBOT_GROQ_API_KEY) {
+    throw new Error('DOCBOT_GROQ_API_KEY is not configured');
+  }
+
+  const prompt = `You are DocBot.\n\nYou MUST answer ONLY using the provided documents.\n\nIf answer not found, say:\n"I couldn't find this in your documents."\n\nContext:\n${context}\n\nQuestion:\n${question}`;
+
+  const response = await axios.post(
+    DOCBOT_GROQ_API_URL,
+    {
+      model: DOCBOT_GROQ_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      max_tokens: 600
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${DOCBOT_GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
+    }
+  );
+
+  const answer = response && response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message && response.data.choices[0].message.content;
+  return String(answer || "I couldn't find this in your documents.").trim();
+}
+
+app.post('/api/guidebot/chat', authMiddleware, async (req, res) => {
+  try {
+    const messages = Array.isArray(req.body && req.body.messages) ? req.body.messages : [];
+    if (messages.length === 0) {
+      return res.status(400).json({ error: 'messages are required' });
+    }
+
+    const reply = await askGuideBot(messages);
+    return res.json({ reply });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'GuideBot request failed' });
+  }
+});
+
+app.post('/api/docbot/query', authMiddleware, async (req, res) => {
+  try {
+    const question = String((req.body && req.body.question) || '').trim();
+    if (!question) {
+      return res.status(400).json({ error: 'question is required' });
+    }
+
+    const allDocs = await Document.find({ userId: req.userId })
+      .sort({ createdAt: -1 })
+      .limit(60)
+      .lean();
+
+    const filteredDocs = getDocbotFilteredDocs(question, allDocs);
+    const docsForContext = filteredDocs.length > 0 ? filteredDocs : allDocs;
+    const context = buildDocbotContext(docsForContext);
+
+    if (!context.trim()) {
+      return res.json({
+        answer: "I couldn't find this in your documents.",
+        documents_used: 0
+      });
+    }
+
+    const answer = await askDocBot({ question, context });
+    return res.json({
+      answer: answer || "I couldn't find this in your documents.",
+      documents_used: Math.min(docsForContext.length, 12)
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'DocBot query failed' });
   }
 });
 
@@ -536,6 +648,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
           }
 
           lastVisionUnknown = {
+            extracted_text: (visionRes && visionRes.extracted_text) || '',
             document_type: 'Unknown',
             category: 'Other',
             folder: 'Other/Unknown',
@@ -556,6 +669,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
       }
 
       const finalPdfResult = pdfVisionResult || lastVisionUnknown || {
+        extracted_text: '',
         document_type: 'Unknown',
         category: 'Other',
         folder: 'Other/Unknown',
@@ -623,7 +737,9 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
             document_type: predictedClass || 'Unknown',
             folder: cleanFolderName(predictedClass),
             confidence: normalizeConfidencePercent(confidence),
-            method: 'ML'
+            method: 'ML',
+            extracted_text: '',
+            key_fields: {}
           };
         } else {
           // ML low confidence — try Vision LLM for this page
@@ -634,7 +750,13 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
             // decide whether vision result is meaningful
             const llmDocType = getDocTypeFromVisionResult(visionRes);
             if (!isUnknownDocType(llmDocType)) {
-              finalResult = { document_type: llmDocType, folder: (visionRes.folder || cleanFolderName(llmDocType)), confidence: (visionRes.confidence || 0), method: 'Vision LLM' };
+              finalResult = {
+                ...(visionRes || {}),
+                document_type: llmDocType,
+                folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType),
+                confidence: (visionRes && visionRes.confidence) || 0,
+                method: 'Vision LLM'
+              };
               finalResult.confidence = normalizeConfidencePercent(finalResult.confidence);
             } else {
               console.log('Vision LLM returned unknown for', p, ' — continuing to next page');
@@ -707,7 +829,9 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         document_type: 'Unknown',
         category: 'Other',
         confidence: 0,
-        method: 'Fallback'
+        method: 'Fallback',
+        extracted_text: '',
+        key_fields: {}
       };
       const target = createStorageTarget({ userId: req.userId, result: fallbackResult, filename: req.file.originalname });
       const { targetDir, targetPath } = target;

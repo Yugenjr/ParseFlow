@@ -9,6 +9,11 @@ const documentSchema = new mongoose.Schema({
   confidence: { type: Number, default: 0 },
   method: { type: String, default: 'Unknown' },
   metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+  extracted_text: { type: String, default: '' },
+  llm_analysis: {
+    summary: { type: String, default: '' },
+    key_fields: { type: Object, default: {} }
+  },
   storage: {
     category: { type: String, default: 'Other' },
     docType: { type: String, default: 'Unknown' },

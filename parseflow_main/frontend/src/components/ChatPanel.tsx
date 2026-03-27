@@ -1,52 +1,187 @@
-import { useState, useRef, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEffect, useRef, useState } from "react";
+import { Volume2, VolumeX, Bot, Send, X, Loader2, Mic, MicOff } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { askGuideBot, type GuideBotMessage } from "@/lib/guidebot-api";
 
-interface Message {
-  role: 'user' | 'bot';
-  text: string;
-}
+interface Message extends GuideBotMessage {}
 
-const guideKB: Record<string, string> = {
-  'upload': 'Go to Upload in the sidebar. Drag & drop files (PDF/JPG/PNG ≤25MB) or click to browse. Hit UPLOAD ALL to process.',
-  'classify': 'After upload, ParseFlow AI automatically classifies documents into categories: Identity, Financial, Legal, Compliance, Tax, Business.',
-  'organize': 'Use the Documents page to view category folders. Click any folder to see documents. Use the ⋮ menu to View, Edit, Delete, or Move.',
-  'history': 'The History page shows all processed documents with timestamps, confidence scores, and status indicators.',
-  'export': 'Go to Export to download data as JSON, CSV, or copy to clipboard. Integration with Google Sheets available.',
-  'confidence': 'Confidence scores: Green (>85%) = high accuracy, Amber (60-85%) = review recommended, Red (<60%) = manual check needed.',
-  'search': 'Use the search bar in the top bar or on individual pages to find documents by name, category, or extracted data.',
-  'default': 'I can help with: upload, classify, organize, history, export, confidence scores, search. What do you need?',
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
 };
 
-function getGuideResponse(input: string): string {
-  const lower = input.toLowerCase();
-  for (const [key, value] of Object.entries(guideKB)) {
-    if (key !== 'default' && lower.includes(key)) return value;
-  }
-  if (lower.includes('help') || lower.includes('how')) return guideKB.default;
-  return guideKB.default;
-}
+type SpeechRecognitionEvent = {
+  resultIndex: number;
+  results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
+};
+
+type SpeechRecognitionErrorEvent = {
+  error: string;
+};
+
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: new () => BrowserSpeechRecognition;
+  webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+};
 
 export function ChatPanel() {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [guideMessages, setGuideMessages] = useState<Message[]>([
-    { role: 'bot', text: 'Welcome to ParseFlow. I can guide you through upload, classification, organizing, and export. Ask me anything.' },
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: "assistant",
+      text: "GuideBot is ready. I can walk you through Upload, Documents, History, Export, folder classification, and basic UI actions.",
+    },
   ]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [speechEnabled, setSpeechEnabled] = useState(false);
+  const [micEnabled, setMicEnabled] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [listeningHint, setListeningHint] = useState("");
+  const [lastAssistantReply, setLastAssistantReply] = useState("");
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const transcriptBaseRef = useRef("");
   const bottomRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [guideMessages]);
+    setSpeechEnabled(typeof window !== "undefined" && "speechSynthesis" in window);
 
-  const messages = guideMessages;
-  const setMessages = setGuideMessages;
+    const speechWindow = window as SpeechRecognitionWindow;
+    const SpeechRecognitionCtor = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    setMicEnabled(Boolean(SpeechRecognitionCtor));
+    if (!SpeechRecognitionCtor) return;
 
-  const handleSend = () => {
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      let finalText = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const piece = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += `${piece} `;
+        } else {
+          interim += piece;
+        }
+      }
+
+      if (finalText.trim()) {
+        const nextBase = `${transcriptBaseRef.current} ${finalText}`.trim();
+        transcriptBaseRef.current = nextBase;
+      }
+
+      const composed = `${transcriptBaseRef.current} ${interim}`.trim();
+      setInput(composed);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+      setListeningHint("Mic input failed. Try again.");
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      setListeningHint("");
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      try {
+        recognition.stop();
+      } catch {
+        // no-op
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const toggleListening = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+
+    if (isListening) {
+      recognition.stop();
+      setIsListening(false);
+      setListeningHint("");
+      return;
+    }
+
+    try {
+      transcriptBaseRef.current = input.trim();
+      recognition.start();
+      setIsListening(true);
+      setListeningHint("Listening... your voice will appear in the text box.");
+    } catch {
+      setIsListening(false);
+      setListeningHint("Could not start mic.");
+    }
+  };
+
+  const stopSpeaking = () => {
+    if (speechEnabled) {
+      window.speechSynthesis.cancel();
+    }
+  };
+
+  const speakText = (text: string) => {
+    if (!speechEnabled || !text.trim()) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleSend = async () => {
     if (!input.trim()) return;
-    const userMsg: Message = { role: 'user', text: input.trim() };
-    const response = getGuideResponse(input);
-    setMessages(prev => [...prev, userMsg, { role: 'bot', text: response }]);
-    setInput('');
+    const userMessage: Message = { role: "user", text: input.trim() };
+    const nextMessages = [...messages, userMessage];
+
+    setMessages(nextMessages);
+    setInput("");
+    setIsSending(true);
+
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        throw new Error("Authentication token missing. Please sign in again.");
+      }
+
+      const reply = await askGuideBot(nextMessages, token);
+      setMessages((prev) => [...prev, { role: "assistant", text: reply }]);
+      setLastAssistantReply(reply);
+
+      if (autoSpeak) {
+        speakText(reply);
+      }
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : "GuideBot could not respond right now.";
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `I hit an issue: ${errorText}. Please check GuideBot env settings and try again.`,
+        },
+      ]);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   if (!user) return null;
@@ -58,60 +193,117 @@ export function ChatPanel() {
         <button
           onClick={() => setIsOpen(true)}
           className="fixed bottom-6 right-6 z-50 h-14 w-14 gradient-primary rounded-sm flex items-center justify-center text-primary-foreground font-heading text-2xl shadow-card hover:opacity-90 transition-opacity duration-200"
+          aria-label="Open GuideBot"
         >
-          💬
+          <Bot className="h-7 w-7" />
         </button>
       )}
 
       {/* Panel */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 z-50 w-[350px] h-[500px] bg-card border border-border rounded-sm shadow-card-hover flex flex-col">
+        <div className="fixed bottom-6 right-6 z-50 w-[360px] max-w-[calc(100vw-1.5rem)] h-[520px] bg-card border border-border rounded-sm shadow-card-hover flex flex-col">
           {/* Header */}
           <div className="flex items-center border-b border-border">
-              <div className="flex-1 h-10 font-mono text-xs uppercase tracking-wider flex items-center px-3">
-                <span className="gradient-primary text-primary-foreground">🛤️ GUIDE</span>
-              </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="h-10 w-10 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors duration-200"
-            >
-              ✕
-            </button>
+            <div className="flex-1 h-10 font-mono text-xs uppercase tracking-wider flex items-center px-3 gap-2">
+              <span className="h-6 px-2 rounded-sm gradient-primary text-primary-foreground inline-flex items-center">GuideBot</span>
+            </div>
+            <div className="h-10 px-1 flex items-center gap-1">
+              <button
+                onClick={() => setAutoSpeak((v) => !v)}
+                disabled={!speechEnabled}
+                className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors duration-200"
+                title={speechEnabled ? (autoSpeak ? "Disable voice output" : "Enable voice output") : "Speech not supported in this browser"}
+                aria-label={autoSpeak ? "Disable voice output" : "Enable voice output"}
+              >
+                {autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={() => setIsOpen(false)}
+                className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors duration-200"
+                aria-label="Close GuideBot"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={`max-w-[85%] px-3 py-2 rounded-sm font-body text-sm ${
-                    msg.role === 'user'
-                      ? 'gradient-primary text-primary-foreground'
-                      : 'bg-secondary text-foreground'
+                  className={`max-w-[85%] px-3 py-2 rounded-sm font-body text-sm whitespace-pre-wrap ${
+                    msg.role === "user"
+                      ? "gradient-primary text-primary-foreground"
+                      : "bg-secondary text-foreground"
                   }`}
                 >
                   {msg.text}
                 </div>
               </div>
             ))}
+            {isSending && (
+              <div className="flex justify-start">
+                <div className="max-w-[85%] px-3 py-2 rounded-sm font-body text-sm bg-secondary text-foreground inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Thinking...
+                </div>
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
 
           {/* Input */}
-          <div className="border-t border-border p-2 flex gap-2">
-            <input
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSend()}
-              className="flex-1 h-9 px-3 bg-background border border-border rounded-sm font-body text-sm text-foreground focus:outline-none focus:border-primary transition-colors duration-200"
-              placeholder={'Ask about ParseFlow...'}
-            />
-            <button
-              onClick={handleSend}
-              className="h-9 px-3 gradient-primary text-primary-foreground font-mono text-xs rounded-sm hover:opacity-90 transition-opacity duration-200"
-            >
-              SEND
-            </button>
+          <div className="border-t border-border p-2 space-y-2">
+            <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-muted-foreground px-1">
+              <span>No personal details will be included</span>
+              <button
+                onClick={() => speakText(lastAssistantReply)}
+                disabled={!speechEnabled || !lastAssistantReply}
+                className="hover:text-foreground disabled:opacity-40"
+              >
+                Replay Voice
+              </button>
+            </div>
+            {listeningHint && (
+              <p className="px-1 text-[10px] font-mono uppercase tracking-wider text-primary">{listeningHint}</p>
+            )}
+            <div className="grid grid-cols-[auto,1fr,80px] gap-2 items-stretch">
+              <button
+                onClick={toggleListening}
+                disabled={!micEnabled || isSending}
+                className="h-full min-h-9 px-2 border border-border text-muted-foreground rounded-sm hover:text-foreground transition-colors duration-200 disabled:opacity-40 inline-flex items-center justify-center"
+                title={micEnabled ? (isListening ? "Stop microphone input" : "Start microphone input") : "Speech recognition not supported in this browser"}
+              >
+                {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              </button>
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                className="h-9 px-3 bg-background border border-border rounded-sm font-body text-sm text-foreground focus:outline-none focus:border-primary transition-colors duration-200"
+                placeholder="Speak or type your question..."
+                disabled={isSending}
+              />
+              <div className="grid grid-rows-2 gap-1">
+                <button
+                  onClick={() => {
+                    void handleSend();
+                  }}
+                  className="h-full px-2 gradient-primary text-primary-foreground font-mono text-[10px] rounded-sm hover:opacity-90 transition-opacity duration-200 disabled:opacity-60 inline-flex items-center justify-center gap-1"
+                  disabled={isSending || !input.trim()}
+                >
+                  <Send className="h-3 w-3" /> Send
+                </button>
+                <button
+                  onClick={stopSpeaking}
+                  disabled={!speechEnabled}
+                  className="h-full px-2 border border-border text-muted-foreground rounded-sm hover:text-foreground transition-colors duration-200 disabled:opacity-40 text-[10px] font-mono uppercase"
+                  title="Stop voice output"
+                >
+                  Stop Voice
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
