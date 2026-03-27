@@ -107,12 +107,29 @@ async function getOrCreateFolder({ drive, name, parentId }) {
   return created.data.id;
 }
 
+function normalizeDriveFolderSegment(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[<>:"\\|?*]/g, '')
+    .replace(/\s+/g, '_');
+}
+
 async function ensureFolderStructure({ drive, userId, category, docType }) {
   const rootId = await getOrCreateFolder({ drive, name: DRIVE_ROOT_FOLDER_NAME });
-  const userFolderId = await getOrCreateFolder({ drive, name: String(userId), parentId: rootId });
-  const categoryFolderId = await getOrCreateFolder({ drive, name: String(category || 'Other'), parentId: userFolderId });
-  const docTypeFolderId = await getOrCreateFolder({ drive, name: String(docType || 'Unknown').replace(/\s+/g, '_'), parentId: categoryFolderId });
-  return docTypeFolderId;
+
+  const categoryName = normalizeDriveFolderSegment(category || 'Other') || 'Other';
+  let folderId = await getOrCreateFolder({ drive, name: categoryName, parentId: rootId });
+
+  const subCategoryParts = String(docType || '')
+    .split(/[\\/]+/)
+    .map((part) => normalizeDriveFolderSegment(part))
+    .filter((part) => part && part.toLowerCase() !== 'unknown');
+
+  for (const part of subCategoryParts) {
+    folderId = await getOrCreateFolder({ drive, name: part, parentId: folderId });
+  }
+
+  return folderId;
 }
 
 async function uploadToDrive({ filePath, fileName, userId, category, docType, userDoc }) {
