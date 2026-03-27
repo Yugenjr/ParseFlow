@@ -1,7 +1,23 @@
-import { Search, FileText, Check, AlertTriangle, X } from "lucide-react";
+import { Search, FileText, Check, AlertTriangle, X, MoreVertical } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
-import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
+import { deleteUserDocument, fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 function formatUploadedAt(ts: string): string {
   const when = new Date(ts);
@@ -30,6 +46,19 @@ export default function HistoryPage() {
   const [docs, setDocs] = useState<BackendDocument[]>([]);
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<BackendDocument | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const getReliableToken = async () => {
+    for (let i = 0; i < 6; i += 1) {
+      const token = await getAuthToken();
+      if (token) return token;
+      await wait(250);
+    }
+    return null;
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -50,6 +79,27 @@ export default function HistoryPage() {
     if (!doc.fileUrl) return;
     const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
     window.open(`${backendBaseUrl}${doc.fileUrl}`, '_blank');
+  };
+
+  const confirmDeleteDocument = async () => {
+    if (!deleteTarget) return;
+
+    setIsDeleting(true);
+    try {
+      const token = await getReliableToken();
+      if (!token) {
+        throw new Error('Authentication token missing. Please sign in again.');
+      }
+
+      await deleteUserDocument(deleteTarget._id, token);
+      setDocs((prev) => prev.filter((doc) => doc._id !== deleteTarget._id));
+      setDeleteTarget(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete document. Please try again.';
+      window.alert(message);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -117,6 +167,28 @@ export default function HistoryPage() {
               </div>
               <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary">{item.method}</span>
               {statusIcon[getHistoryStatus(item)]}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+                    aria-label="More actions"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(item);
+                    }}
+                    className="text-destructive"
+                  >
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             );
           })
@@ -126,6 +198,30 @@ export default function HistoryPage() {
       <button className="w-full py-3 font-mono text-xs text-primary hover:underline uppercase tracking-wider">
         LOAD MORE
       </button>
+
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {deleteTarget?.filename || 'this document'}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeleteDocument();
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

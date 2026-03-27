@@ -3,6 +3,7 @@ import { useState, useCallback, useMemo, useRef } from "react";
 import { uploadDocument } from "@/lib/backend-api";
 import { useAuth } from "@/contexts/AuthContext";
 import axios from "axios";
+import { useEffect } from "react";
 
 interface QueueItem {
   id: string;
@@ -20,6 +21,16 @@ export default function UploadPage() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [lastResultJson, setLastResultJson] = useState<string>("");
+  const progressTimersRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    return () => {
+      Object.values(progressTimersRef.current).forEach((timerId) => {
+        window.clearInterval(timerId);
+      });
+      progressTimersRef.current = {};
+    };
+  }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -137,14 +148,38 @@ export default function UploadPage() {
 
     const queuedItems = queue.filter((q) => q.status === "queued" || q.status === "error");
     for (const item of queuedItems) {
+      const clearProgressTimer = () => {
+        const timerId = progressTimersRef.current[item.id];
+        if (timerId) {
+          window.clearInterval(timerId);
+          delete progressTimersRef.current[item.id];
+        }
+      };
+
+      clearProgressTimer();
       setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "uploading", progress: 0, message: undefined } : q));
+
+      progressTimersRef.current[item.id] = window.setInterval(() => {
+        setQueue((prev) => prev.map((q) => {
+          if (q.id !== item.id || q.status !== "uploading") return q;
+          const nextProgress = Math.min(92, q.progress + (q.progress < 70 ? 6 : 3));
+          return { ...q, progress: nextProgress };
+        }));
+      }, 200);
+
       try {
         const payload = await uploadDocument(item.file, token, (percent) => {
-          setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, progress: percent, status: "uploading" } : q));
+          setQueue((prev) => prev.map((q) => {
+            if (q.id !== item.id) return q;
+            const next = Math.min(92, Math.max(q.progress, percent));
+            return { ...q, progress: next, status: "uploading" };
+          }));
         });
+        clearProgressTimer();
         setLastResultJson(JSON.stringify(payload.result, null, 2));
         setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "done", progress: 100, message: String(payload.result?.document_type || "Processed") } : q));
       } catch (err) {
+        clearProgressTimer();
         const message = axios.isAxiosError(err)
           ? String(err.response?.data?.error || err.message || "Upload failed")
           : err instanceof Error

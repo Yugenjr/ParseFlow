@@ -1,7 +1,23 @@
 import { MoreVertical, Plus } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
-import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
+import { deleteUserDocument, fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const CUSTOM_FOLDERS_KEY = "parseflow_custom_folders";
 
@@ -19,6 +35,19 @@ export default function DocumentsPage() {
   const [docs, setDocs] = useState<BackendDocument[]>([]);
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
   const [customFolders, setCustomFolders] = useState<string[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<BackendDocument | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const getReliableToken = async () => {
+    for (let i = 0; i < 6; i += 1) {
+      const token = await getAuthToken();
+      if (token) return token;
+      await wait(250);
+    }
+    return null;
+  };
 
   useEffect(() => {
     try {
@@ -116,6 +145,27 @@ export default function DocumentsPage() {
     setCustomFolders((prev) => [...prev, normalized]);
   };
 
+  const confirmDeleteDocument = async () => {
+    if (!deleteTarget) return;
+
+    setIsDeleting(true);
+    try {
+      const token = await getReliableToken();
+      if (!token) {
+        throw new Error('Authentication token missing. Please sign in again.');
+      }
+
+      await deleteUserDocument(deleteTarget._id, token);
+      setDocs((prev) => prev.filter((doc) => doc._id !== deleteTarget._id));
+      setDeleteTarget(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete document. Please try again.';
+      window.alert(message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-5xl">
       <h2 className="font-heading text-3xl text-foreground tracking-wider">DOCUMENT ORGANIZER</h2>
@@ -188,9 +238,28 @@ export default function DocumentsPage() {
                         <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary uppercase">
                           {doc.category}
                         </span>
-                        <button className="text-muted-foreground hover:text-foreground transition-colors duration-200">
-                          <MoreVertical className="h-4 w-4" />
-                        </button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+                              aria-label="More actions"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget(doc);
+                              }}
+                              className="text-destructive"
+                            >
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     ))
                   )}
@@ -208,6 +277,30 @@ export default function DocumentsPage() {
       >
         <Plus className="h-6 w-6" />
       </button>
+
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {deleteTarget?.filename || 'this document'}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeleteDocument();
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

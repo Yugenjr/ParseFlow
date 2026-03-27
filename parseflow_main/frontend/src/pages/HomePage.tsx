@@ -2,7 +2,7 @@ import { FileText, BarChart3, HardDrive, Upload, Camera, Clock, FolderOpen, Chev
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
-import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
+import { fetchDashboardStats, fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
 
 function formatUploadedAt(ts: string): string {
   const when = new Date(ts);
@@ -14,20 +14,30 @@ export default function HomePage() {
   const navigate = useNavigate();
   const { user, getAuthToken } = useAuth();
   const [docs, setDocs] = useState<BackendDocument[]>([]);
+  const [avgTimeSec, setAvgTimeSec] = useState(0);
+  const [queryCount, setQueryCount] = useState(0);
 
   useEffect(() => {
     const load = async () => {
       if (!user) return;
       const token = await getAuthToken();
       if (!token) return;
-      const backendDocs = await fetchUserDocuments(token);
+      const [backendDocs, stats] = await Promise.all([
+        fetchUserDocuments(token),
+        fetchDashboardStats(token)
+      ]);
       setDocs(backendDocs);
+      setAvgTimeSec(Number(stats.avgProcessingTimeSec || 0));
+      setQueryCount(Number(stats.queryCount || 0));
     };
-    load().catch(() => setDocs([]));
+    load().catch(() => {
+      setDocs([]);
+      setAvgTimeSec(0);
+      setQueryCount(0);
+    });
   }, [user, getAuthToken]);
 
   const thisWeek = docs.filter(d => Date.now() - new Date(d.createdAt).getTime() < 7 * 86400000).length;
-  const avgTime = "0.9";
   const aiAccuracy = docs.length
     ? Math.round(
       docs.reduce((sum, doc) => sum + Number(doc.accuracy ?? doc.confidence ?? 0), 0) / docs.length
@@ -39,8 +49,8 @@ export default function HomePage() {
     { icon: BarChart3, label: "THIS WEEK", value: String(thisWeek) },
     { icon: HardDrive, label: "STORAGE", value: `${(docs.length * 0.18).toFixed(1)}MB` },
     { icon: Bot, label: "AI ACCURACY", value: `${aiAccuracy}%` },
-    { icon: Zap, label: "AVG TIME", value: `${avgTime}s` },
-    { icon: Search, label: "QUERIES", value: "12" },
+    { icon: Zap, label: "AVG TIME", value: `${avgTimeSec.toFixed(1)}s` },
+    { icon: Search, label: "QUERIES", value: String(queryCount) },
   ];
 
   const quickActions = [

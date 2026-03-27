@@ -9,6 +9,7 @@ const { createClerkClient } = require('@clerk/backend');
 const { connectDB } = require('./config/db');
 const User = require('./models/User');
 const Document = require('./models/Document');
+const QueryEvent = require('./models/QueryEvent');
 const Notification = require('./models/Notification');
 const { authMiddleware } = require('./middleware/authMiddleware');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
@@ -460,6 +461,9 @@ async function persistDocumentForUser({ req, result, filePath }) {
   const fileUrl = makeFileUrl(filePath);
   const accuracy = normalizeConfidencePercent(result && (result.accuracy ?? result.confidence));
   const confidence = normalizeConfidencePercent(result && result.confidence);
+  const processingTimeMs = Number(result && result.processing_time_ms) > 0
+    ? Math.round(Number(result.processing_time_ms))
+    : 0;
   const isVision = String((result && result.method) || '').toLowerCase().includes('vision');
   const extractedText = isVision ? String((result && result.extracted_text) || '') : '';
   const llmAnalysis = isVision
@@ -477,6 +481,7 @@ async function persistDocumentForUser({ req, result, filePath }) {
     category,
     accuracy,
     confidence,
+    processing_time_ms: processingTimeMs,
     method: (result && result.method) || 'Unknown',
     metadata: (result && result.key_fields) || {},
     extracted_text: extractedText,
@@ -732,6 +737,7 @@ app.post('/api/guidebot/chat', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'messages are required' });
     }
 
+    await QueryEvent.create({ userId: req.userId, source: 'GuideBot' });
     const reply = await askGuideBot(messages);
     return res.json({ reply });
   } catch (err) {
@@ -746,6 +752,7 @@ async function handleDocbotQuery(req, res) {
       return res.status(400).json({ error: 'question is required' });
     }
 
+    await QueryEvent.create({ userId: req.userId, source: 'DocBot' });
     const docMode = isDocumentDataQuery(question);
 
     const allDocs = await Document.find({ userId: req.userId })
@@ -833,6 +840,63 @@ app.get('/documents', authMiddleware, async (req, res) => {
   }
 });
 
+app.get('/api/stats', authMiddleware, async (req, res) => {
+  try {
+    const [timingAgg, queryCount] = await Promise.all([
+      Document.aggregate([
+        { $match: { userId: req.userId, processing_time_ms: { $gt: 0 } } },
+        { $group: { _id: null, avgMs: { $avg: '$processing_time_ms' } } }
+      ]),
+      QueryEvent.countDocuments({ userId: req.userId })
+    ]);
+
+    const avgMs = timingAgg[0] && timingAgg[0].avgMs ? Number(timingAgg[0].avgMs) : 0;
+    const avgProcessingTimeSec = avgMs > 0 ? Number((avgMs / 1000).toFixed(1)) : 0;
+
+    return res.json({
+      avgProcessingTimeSec,
+      queryCount: Number(queryCount || 0)
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch stats' });
+  }
+});
+
+async function handleDeleteDocument(req, res) {
+  try {
+    const docId = decodeURIComponent(String(req.params.id || '').trim());
+    if (!docId) {
+      return res.status(400).json({ error: 'document id is required' });
+    }
+
+    if (!/^[a-fA-F0-9]{24}$/.test(docId)) {
+      return res.status(400).json({ error: 'Invalid document id' });
+    }
+
+    // Delete DB record first so document is removed even if file unlink fails.
+    const doc = await Document.findOneAndDelete({ _id: docId, userId: req.userId });
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const absolutePath = path.resolve(doc.filePath || '');
+    if (absolutePath && fs.existsSync(absolutePath)) {
+      try {
+        await fs.promises.unlink(absolutePath);
+      } catch {
+        // Best effort: DB record is already deleted.
+      }
+    }
+
+    return res.json({ success: true, deletedId: String(doc._id) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to delete document' });
+  }
+}
+
+app.delete('/api/documents/:id', authMiddleware, handleDeleteDocument);
+app.delete('/documents/:id', authMiddleware, handleDeleteDocument);
+
 app.post('/api/sync-storage', authMiddleware, async (req, res) => {
   try {
     const result = await syncStorageForUser(req.userId);
@@ -853,6 +917,8 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
     } catch (e) {
       return res.status(500).json({ error: 'Failed to persist authenticated user' });
     }
+
+    const uploadStartTs = Date.now();
 
     const ext = path.extname(req.file.originalname || '').toLowerCase();
     let originalPath = path.resolve(req.file.path);
@@ -948,6 +1014,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         },
         method: 'Vision LLM'
       };
+      finalPdfResult.processing_time_ms = Date.now() - uploadStartTs;
       finalPdfResult.category = deriveCategory(finalPdfResult);
       finalPdfResult.accuracy = normalizeConfidencePercent(finalPdfResult.accuracy ?? finalPdfResult.confidence);
       finalPdfResult.confidence = normalizeConfidencePercent(finalPdfResult.confidence);
@@ -1014,6 +1081,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
             extracted_text: '',
             key_fields: {}
           };
+          finalResult.processing_time_ms = Date.now() - uploadStartTs;
         } else {
           // ML low confidence — try Vision LLM for this page
           console.log('ML low confidence (', confidenceRaw, ') — invoking Vision LLM on', p);
@@ -1036,6 +1104,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
                 confidence: (visionRes && visionRes.confidence) || 0,
                 method: 'Vision LLM'
               };
+              finalResult.processing_time_ms = Date.now() - uploadStartTs;
               finalResult.accuracy = normalizeConfidencePercent(finalResult.accuracy);
               finalResult.confidence = normalizeConfidencePercent(finalResult.confidence);
               if (!finalResult.confidence && finalResult.accuracy) {
@@ -1117,6 +1186,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         extracted_text: '',
         key_fields: {}
       };
+      fallbackResult.processing_time_ms = Date.now() - uploadStartTs;
       const target = createStorageTarget({ userId: req.userId, result: fallbackResult, filename: req.file.originalname });
       const { targetDir, targetPath } = target;
       if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });

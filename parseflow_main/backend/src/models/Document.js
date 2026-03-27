@@ -8,6 +8,7 @@ const documentSchema = new mongoose.Schema({
   category: { type: String, default: 'Other' },
   accuracy: { type: Number, default: 0 },
   confidence: { type: Number, default: 0 },
+  processing_time_ms: { type: Number, default: 0 },
   method: { type: String, default: 'Unknown' },
   metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
   extracted_text: { type: String, default: '' },

@@ -42,6 +42,11 @@ export interface BackendNotification {
   createdAt: string;
 }
 
+export interface BackendStats {
+  avgProcessingTimeSec: number;
+  queryCount: number;
+}
+
 interface UploadResponse {
   success: boolean;
   document: BackendDocument;
@@ -80,6 +85,30 @@ export async function fetchUserDocuments(token: string): Promise<BackendDocument
   return Array.isArray(resp.data) ? (resp.data as BackendDocument[]) : [];
 }
 
+export async function deleteUserDocument(documentId: string, token: string): Promise<void> {
+  const encodedId = encodeURIComponent(String(documentId || '').trim());
+  if (!encodedId) {
+    throw new Error('Invalid document id');
+  }
+
+  try {
+    await axios.delete(`${backendBaseUrl}/api/documents/${encodedId}`, {
+      headers: buildAuthHeaders(token)
+    });
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      await axios.delete(`${backendBaseUrl}/documents/${encodedId}`, {
+        headers: buildAuthHeaders(token)
+      });
+      return;
+    }
+    if (axios.isAxiosError(err)) {
+      throw new Error(String(err.response?.data?.error || err.message || 'Delete failed'));
+    }
+    throw err;
+  }
+}
+
 export async function queryDocBot(question: string, token: string): Promise<{ answer: string; documents_used: number }> {
   let resp;
   try {
@@ -114,4 +143,16 @@ export async function fetchRecentNotifications(token: string): Promise<BackendNo
 
   const data = resp.data as { notifications?: BackendNotification[] };
   return Array.isArray(data.notifications) ? data.notifications : [];
+}
+
+export async function fetchDashboardStats(token: string): Promise<BackendStats> {
+  const resp = await axios.get(`${backendBaseUrl}/api/stats`, {
+    headers: buildAuthHeaders(token)
+  });
+
+  const data = resp.data as { avgProcessingTimeSec?: number; queryCount?: number };
+  return {
+    avgProcessingTimeSec: Number(data.avgProcessingTimeSec || 0),
+    queryCount: Number(data.queryCount || 0)
+  };
 }
