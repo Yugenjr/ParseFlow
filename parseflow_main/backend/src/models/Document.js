@@ -6,6 +6,7 @@ const documentSchema = new mongoose.Schema({
   filePath: { type: String, required: true },
   document_type: { type: String, default: 'Unknown' },
   category: { type: String, default: 'Other' },
+  accuracy: { type: Number, default: 0 },
   confidence: { type: Number, default: 0 },
   method: { type: String, default: 'Unknown' },
   metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
@@ -23,6 +24,7 @@ const documentSchema = new mongoose.Schema({
   classification: {
     document_type: { type: String, default: 'Unknown' },
     category: { type: String, default: 'Other' },
+    accuracy: { type: Number, default: 0 },
     confidence: { type: Number, default: 0 },
     method: { type: String, default: 'Unknown' }
   },

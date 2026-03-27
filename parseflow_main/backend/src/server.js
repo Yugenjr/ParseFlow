@@ -9,10 +9,15 @@ const { createClerkClient } = require('@clerk/backend');
 const { connectDB } = require('./config/db');
 const User = require('./models/User');
 const Document = require('./models/Document');
+const Notification = require('./models/Notification');
 const { authMiddleware } = require('./middleware/authMiddleware');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
 const { askGuideBot } = require('./services/guidebotService');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
+const { createNotification } = require('./services/notificationService');
+const { sendEmail } = require('./services/emailService');
+const notificationRoutes = require('./routes/notifications');
+const { startWeeklySummaryJob } = require('./cron/weeklySummary');
 
 const app = express();
 app.use(cors());
@@ -83,8 +88,15 @@ async function safeMoveFile(src, dest) {
 }
 
 const ML_SERVICE_URL = 'http://127.0.0.1:8001/predict';
+const STORAGE_LIMIT_MB = 20;
+const STORAGE_ALERTS = [
+  { threshold: 70, message: 'You have used 70% of your storage' },
+  { threshold: 90, message: 'You have almost reached your storage limit' },
+  { threshold: 100, message: 'Storage limit reached. Uploads are blocked' }
+];
 
-const CONFIDENCE_THRESHOLD = 0.80;
+const CONFIDENCE_THRESHOLD_PERCENT = 90;
+const ALLOWED_CATEGORIES = new Set(['Identity', 'Financial', 'Legal', 'Tax', 'Business', 'Other']);
 const DOCBOT_GROQ_API_URL = process.env.DOCBOT_GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const DOCBOT_GROQ_MODEL = process.env.DOCBOT_GROQ_MODEL || 'llama-3.1-8b-instant';
 const DOCBOT_GROQ_API_KEY = process.env.DOCBOT_GROQ_API_KEY || process.env.GUIDEBOT_GROQ_API_KEY || process.env.GROQ_API_KEY;
@@ -215,15 +227,85 @@ async function upsertUserFromAuth(req) {
 }
 
 function deriveCategory(result) {
-  if (result && result.category) return String(result.category);
-  if (!result || !result.folder) return 'Other';
-  const folder = String(result.folder);
-  return folder.includes('/') ? folder.split('/')[0] : 'Other';
+  const fromResult = normalizeCategory(result && result.category);
+  if (fromResult) return fromResult;
+
+  const docType = deriveDocType(result);
+  const inferred = inferCategoryFromDocType(docType);
+  if (inferred) return inferred;
+
+  if (result && result.folder) {
+    const folder = String(result.folder);
+    const fromFolder = normalizeCategory(folder.includes('/') ? folder.split('/')[0] : folder);
+    if (fromFolder) return fromFolder;
+  }
+
+  return 'Other';
 }
 
 function deriveDocType(result) {
   const raw = (result && result.document_type) || 'Unknown';
-  return String(raw).trim() || 'Unknown';
+  const normalized = String(raw).trim() || 'Unknown';
+  const specificFromContent = inferSpecificDocTypeFromContent(result);
+
+  // Replace generic tax labels with specific form names when detected from OCR/folder text.
+  const genericTaxLabels = new Set(['tax document', 'gst document', 'gst return', 'tax return']);
+  if (specificFromContent && (genericTaxLabels.has(normalized.toLowerCase()) || normalized.toLowerCase().includes('tax'))) {
+    return specificFromContent;
+  }
+
+  return normalized;
+}
+
+function inferSpecificDocTypeFromContent(result) {
+  const merged = [
+    String((result && result.document_type) || ''),
+    String((result && result.folder) || ''),
+    String((result && result.extracted_text) || ''),
+    JSON.stringify((result && result.key_fields) || {})
+  ].join(' ').toLowerCase();
+
+  if (/(gstr\s*[- ]?3b|form\s*gstr\s*[- ]?3b)/.test(merged)) return 'GSTR 3B';
+  if (/(gstr\s*[- ]?1|form\s*gstr\s*[- ]?1)/.test(merged)) return 'GSTR 1';
+  if (/(form\s*16|form16)/.test(merged)) return 'Form 16';
+  if (/(itr|income\s*tax\s*return)/.test(merged)) return 'ITR Acknowledgment';
+  if (/(challan|gst\s*challan)/.test(merged)) return 'GST Challan';
+
+  return null;
+}
+
+function normalizeCategory(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const lowered = raw.toLowerCase();
+  const aliases = {
+    identity: 'Identity',
+    id: 'Identity',
+    financial: 'Financial',
+    finance: 'Financial',
+    legal: 'Legal',
+    tax: 'Tax',
+    taxation: 'Tax',
+    business: 'Business',
+    other: 'Other'
+  };
+
+  if (aliases[lowered]) return aliases[lowered];
+  return ALLOWED_CATEGORIES.has(raw) ? raw : null;
+}
+
+function inferCategoryFromDocType(docType) {
+  const t = String(docType || '').toLowerCase();
+  if (!t) return null;
+  if (/(aadhaar|aadhar|pan|passport|driving|license|licence|voter|id\b)/.test(t)) return 'Identity';
+  if (/(invoice|receipt|bill|bank|statement|salary|pay\s*slip)/.test(t)) return 'Financial';
+  if (/(gstr|gst|itr|form\s*16|tax|t[ -]?ds)/.test(t)) return 'Tax';
+  if (/(agreement|contract|legal|deed|affidavit)/.test(t)) return 'Legal';
+  if (/(registration|incorporation|msme|business|company)/.test(t)) return 'Business';
+  if (t.includes('unknown')) return 'Other';
+  return null;
 }
 
 function createStorageTarget({ userId, result, filename }) {
@@ -285,6 +367,7 @@ async function syncStorageForUser(userId) {
         filePath: filePathAbs,
         document_type: inferred.document_type,
         category: inferred.category,
+        accuracy: 0,
         confidence: 0,
         method: 'Storage Sync',
         metadata: {},
@@ -297,6 +380,7 @@ async function syncStorageForUser(userId) {
         classification: {
           document_type: inferred.document_type,
           category: inferred.category,
+          accuracy: 0,
           confidence: 0,
           method: 'Storage Sync'
         }
@@ -319,6 +403,7 @@ async function syncStorageForUser(userId) {
       existing.classification = {
         document_type: existing.document_type || inferred.document_type,
         category: existing.category || inferred.category,
+        accuracy: Number(existing.accuracy || 0),
         confidence: Number(existing.confidence || 0),
         method: existing.method || 'Storage Sync'
       };
@@ -373,6 +458,7 @@ async function persistDocumentForUser({ req, result, filePath }) {
   const category = deriveCategory(result);
   const docType = deriveDocType(result).replace(/\s+/g, '_');
   const fileUrl = makeFileUrl(filePath);
+  const accuracy = normalizeConfidencePercent(result && (result.accuracy ?? result.confidence));
   const confidence = normalizeConfidencePercent(result && result.confidence);
   const isVision = String((result && result.method) || '').toLowerCase().includes('vision');
   const extractedText = isVision ? String((result && result.extracted_text) || '') : '';
@@ -389,6 +475,7 @@ async function persistDocumentForUser({ req, result, filePath }) {
     filePath,
     document_type: deriveDocType(result),
     category,
+    accuracy,
     confidence,
     method: (result && result.method) || 'Unknown',
     metadata: (result && result.key_fields) || {},
@@ -403,11 +490,106 @@ async function persistDocumentForUser({ req, result, filePath }) {
     classification: {
       document_type: deriveDocType(result),
       category,
+      accuracy,
       confidence,
       method: (result && result.method) || 'Unknown'
     }
   });
 }
+
+function getStorageUsedMB(files) {
+  let totalBytes = 0;
+  for (const doc of files) {
+    try {
+      if (doc.filePath && fs.existsSync(doc.filePath)) {
+        totalBytes += fs.statSync(doc.filePath).size;
+      }
+    } catch {
+      // Ignore file read errors for usage calculation.
+    }
+  }
+  return totalBytes / (1024 * 1024);
+}
+
+async function calculateStorageUsage(userId) {
+  const files = await Document.find({ userId }).select({ filePath: 1 }).lean();
+  const usedMB = getStorageUsedMB(files);
+  const percentage = (usedMB / STORAGE_LIMIT_MB) * 100;
+  return { usedMB, percentage };
+}
+
+async function notifyStorageThresholds(userId, email) {
+  const { percentage } = await calculateStorageUsage(userId);
+  const roundedPercentage = Math.round(percentage);
+
+  for (const alert of STORAGE_ALERTS) {
+    if (percentage < alert.threshold) continue;
+
+    const alreadySent = await Notification.findOne({
+      userId,
+      type: 'STORAGE',
+      message: alert.message
+    }).lean();
+
+    if (alreadySent) continue;
+
+    await createNotification(userId, alert.message, 'STORAGE');
+    await sendEmail(
+      email,
+      'ParseFlow Storage Alert',
+      `You have used ${roundedPercentage}% of your storage.`
+    );
+  }
+}
+
+async function resolveUserEmail(userId, tokenEmail) {
+  if (tokenEmail) return tokenEmail;
+
+  if (clerkClient) {
+    try {
+      const clerkUser = await clerkClient.users.getUser(userId);
+      const primaryEmail = clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId);
+      if (primaryEmail && primaryEmail.emailAddress) {
+        return primaryEmail.emailAddress;
+      }
+      if (clerkUser.emailAddresses[0] && clerkUser.emailAddresses[0].emailAddress) {
+        return clerkUser.emailAddresses[0].emailAddress;
+      }
+    } catch (err) {
+      console.warn('Unable to resolve user email from Clerk:', err && (err.message || err));
+    }
+  }
+
+  const dbUser = await User.findOne({ clerkId: userId }).select({ email: 1 }).lean();
+  return (dbUser && dbUser.email) || null;
+}
+
+async function persistAndNotify({ req, result, filePath }) {
+  const savedDoc = await persistDocumentForUser({ req, result, filePath });
+
+  try {
+    const docType = deriveDocType(result);
+    const category = deriveCategory(result);
+    const storageDocType = (savedDoc.storage && savedDoc.storage.docType) || docType.replace(/\s+/g, '_');
+
+    await createNotification(req.userId, `Upload successful: ${savedDoc.filename}`, 'ORGANIZATION');
+    await createNotification(req.userId, `We detected a ${docType}`, 'INSIGHT');
+    await createNotification(
+      req.userId,
+      `Your document has been categorized under ${category}/${storageDocType}`,
+      'ORGANIZATION'
+    );
+
+    const userEmail = await resolveUserEmail(req.userId, req.userEmail);
+    await notifyStorageThresholds(req.userId, userEmail);
+  } catch (notifyErr) {
+    console.error('Notification flow failed:', notifyErr && (notifyErr.message || notifyErr));
+  }
+
+  return savedDoc;
+}
+
+app.use('/notifications', notificationRoutes);
 
 app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
   try {
@@ -611,9 +793,11 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
 
     const hydrated = docs.map((doc) => ({
       ...doc,
+      accuracy: normalizeConfidencePercent(doc.accuracy ?? doc.confidence),
       confidence: normalizeConfidencePercent(doc.confidence),
       classification: {
         ...(doc.classification || {}),
+        accuracy: normalizeConfidencePercent(doc.classification && (doc.classification.accuracy ?? doc.classification.confidence)),
         confidence: normalizeConfidencePercent(doc.classification && doc.classification.confidence)
       },
       fileUrl: makeFileUrl(doc.filePath)
@@ -633,9 +817,11 @@ app.get('/documents', authMiddleware, async (req, res) => {
 
     const hydrated = docs.map((doc) => ({
       ...doc,
+      accuracy: normalizeConfidencePercent(doc.accuracy ?? doc.confidence),
       confidence: normalizeConfidencePercent(doc.confidence),
       classification: {
         ...(doc.classification || {}),
+        accuracy: normalizeConfidencePercent(doc.classification && (doc.classification.accuracy ?? doc.classification.confidence)),
         confidence: normalizeConfidencePercent(doc.classification && doc.classification.confidence)
       },
       fileUrl: makeFileUrl(doc.filePath)
@@ -751,6 +937,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         document_type: 'Unknown',
         category: 'Other',
         folder: 'Other/Unknown',
+        accuracy: 0,
         confidence: 0,
         key_fields: {
           name: null,
@@ -761,14 +948,19 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         },
         method: 'Vision LLM'
       };
+      finalPdfResult.category = deriveCategory(finalPdfResult);
+      finalPdfResult.accuracy = normalizeConfidencePercent(finalPdfResult.accuracy ?? finalPdfResult.confidence);
       finalPdfResult.confidence = normalizeConfidencePercent(finalPdfResult.confidence);
+      if (!finalPdfResult.confidence && finalPdfResult.accuracy) {
+        finalPdfResult.confidence = finalPdfResult.accuracy;
+      }
 
       try {
         const target = createStorageTarget({ userId: req.userId, result: finalPdfResult, filename: req.file.originalname });
         const { targetDir, targetPath } = target;
         if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
         await safeMoveFile(originalPath, targetPath);
-        const savedDoc = await persistDocumentForUser({
+        const savedDoc = await persistAndNotify({
           req,
           result: finalPdfResult,
           filePath: targetPath
@@ -806,22 +998,25 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         );
         console.log('ML Success for', p, mlResponse.data);
         const predictedClass = mlResponse.data.class || mlResponse.data['class'];
-        const confidence = parseFloat(mlResponse.data.confidence || 0);
+        const confidenceRaw = parseFloat(mlResponse.data.confidence || 0);
+        const confidencePercent = normalizeConfidencePercent(confidenceRaw);
 
-        if (confidence >= CONFIDENCE_THRESHOLD) {
+        if (confidencePercent >= CONFIDENCE_THRESHOLD_PERCENT) {
           // Good ML result — accept and return
           console.log('ML HIGH CONFIDENCE -> RETURNING ML Result for', p);
           finalResult = {
             document_type: predictedClass || 'Unknown',
             folder: cleanFolderName(predictedClass),
-            confidence: normalizeConfidencePercent(confidence),
+            category: deriveCategory({ document_type: predictedClass, folder: cleanFolderName(predictedClass) }),
+            accuracy: confidencePercent,
+            confidence: confidencePercent,
             method: 'ML',
             extracted_text: '',
             key_fields: {}
           };
         } else {
           // ML low confidence — try Vision LLM for this page
-          console.log('ML low confidence (', confidence, ') — invoking Vision LLM on', p);
+          console.log('ML low confidence (', confidenceRaw, ') — invoking Vision LLM on', p);
           try {
             const visionRes = await analyzeImageWithLLM(p);
             console.log('Vision LLM result for', p, visionRes);
@@ -832,10 +1027,20 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
                 ...(visionRes || {}),
                 document_type: llmDocType,
                 folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType),
+                category: deriveCategory({
+                  ...(visionRes || {}),
+                  document_type: llmDocType,
+                  folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType)
+                }),
+                accuracy: (visionRes && (visionRes.accuracy ?? visionRes.confidence)) || 0,
                 confidence: (visionRes && visionRes.confidence) || 0,
                 method: 'Vision LLM'
               };
+              finalResult.accuracy = normalizeConfidencePercent(finalResult.accuracy);
               finalResult.confidence = normalizeConfidencePercent(finalResult.confidence);
+              if (!finalResult.confidence && finalResult.accuracy) {
+                finalResult.confidence = finalResult.accuracy;
+              }
             } else {
               console.log('Vision LLM returned unknown for', p, ' — continuing to next page');
             }
@@ -851,7 +1056,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
           try {
             if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
             await safeMoveFile(originalPath, targetPath);
-            const savedDoc = await persistDocumentForUser({
+            const savedDoc = await persistAndNotify({
               req,
               result: finalResult,
               filePath: targetPath
@@ -906,6 +1111,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
       const fallbackResult = {
         document_type: 'Unknown',
         category: 'Other',
+        accuracy: 0,
         confidence: 0,
         method: 'Fallback',
         extracted_text: '',
@@ -916,7 +1122,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
       if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
       try {
         await safeMoveFile(originalPath, targetPath);
-        const savedDoc = await persistDocumentForUser({
+        const savedDoc = await persistAndNotify({
           req,
           result: fallbackResult,
           filePath: targetPath
@@ -963,6 +1169,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
 
 app.listen(5000, () => {
   console.log('Backend running on port 5000');
+  startWeeklySummaryJob();
   connectDB()
     .then(() => backfillClerkUsersToMongo())
     .then(() => syncAllExistingStorageForUsers())

@@ -10,10 +10,12 @@ Return STRICT JSON only. Do NOT add prose or explanation.
 OBJECTIVE:
 1. Perform OCR on the provided image.
 2. Return full extracted text from OCR in an "extracted_text" field.
-2. Identify the document type (Aadhaar Card, PAN Card, Passport, Driving License, Bank Statement, Invoice, Receipt, Tax Document, Legal Agreement, Business Registration, Unknown).
+3. Identify the specific document type in "document_type" (examples: Aadhaar Card, PAN Card, Passport, Driving License, GSTR 3B, GST Return, Form 16, ITR Acknowledgment, Bank Statement, Invoice, Receipt, Legal Agreement, Business Registration, Unknown).
 3. Extract key fields when present (name, id_number, date_of_birth, document_number, issuing_authority).
-4. Assign storage category (Identity, Financial, Legal, Tax, Business, Other) and suggest folder (Category/Document_Type).
-5. Provide a confidence score as a percentage between 0 and 100 (integer preferred).
+4. Assign storage category in "category" using ONLY one of: Identity, Financial, Legal, Tax, Business, Other.
+5. IMPORTANT: category must be broad taxonomy (example: if document_type is "GSTR 3B", category must be "Tax").
+6. Suggest folder as Category/Document_Type.
+7. Provide both "confidence" and "accuracy" as percentage between 0 and 100 (integer preferred). "accuracy" must represent this Vision analysis confidence.
 
 RULES:
 - NEVER return text outside JSON.
@@ -26,6 +28,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
   "document_type": "",
   "category": "",
   "folder": "",
+  "accuracy": 0,
   "confidence": 0,
   "key_fields": {
     "name": null,
@@ -112,7 +115,11 @@ async function analyzeImageWithLLM(filePath) {
         try {
           const parsed = JSON.parse(jsonStr);
           parsed.extracted_text = typeof parsed.extracted_text === 'string' ? parsed.extracted_text : '';
+          parsed.accuracy = normalizeConfidencePercent(parsed.accuracy ?? parsed.confidence);
           parsed.confidence = normalizeConfidencePercent(parsed.confidence);
+          if (!parsed.confidence && parsed.accuracy) {
+            parsed.confidence = parsed.accuracy;
+          }
           return parsed;
         } catch (e) {
           console.error('Vision LLM JSON parse error:', e.message);
@@ -123,7 +130,11 @@ async function analyzeImageWithLLM(filePath) {
     // If provider returned structured object already
     if (typeof output === 'object') {
       output.extracted_text = typeof output.extracted_text === 'string' ? output.extracted_text : '';
+      output.accuracy = normalizeConfidencePercent(output.accuracy ?? output.confidence);
       output.confidence = normalizeConfidencePercent(output.confidence);
+      if (!output.confidence && output.accuracy) {
+        output.confidence = output.accuracy;
+      }
       return output;
     }
 
@@ -133,6 +144,7 @@ async function analyzeImageWithLLM(filePath) {
       document_type: 'Unknown',
       category: 'Other',
       folder: 'Other/Unknown',
+      accuracy: 0,
       confidence: 0,
       key_fields: {
         name: null,
@@ -154,6 +166,7 @@ async function analyzeImageWithLLM(filePath) {
       document_type: 'Unknown',
       category: 'Other',
       folder: 'Other/Unknown',
+      accuracy: 0,
       confidence: 0,
       key_fields: {
         name: null,

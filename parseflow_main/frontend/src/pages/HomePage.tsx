@@ -4,13 +4,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
 import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
 
-function timeAgo(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime();
-  const hours = Math.floor(diff / 3600000);
-  if (hours < 1) return 'just now';
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+function formatUploadedAt(ts: string): string {
+  const when = new Date(ts);
+  if (Number.isNaN(when.getTime())) return 'time unavailable';
+  return when.toLocaleString();
 }
 
 export default function HomePage() {
@@ -31,12 +28,17 @@ export default function HomePage() {
 
   const thisWeek = docs.filter(d => Date.now() - new Date(d.createdAt).getTime() < 7 * 86400000).length;
   const avgTime = "0.9";
+  const aiAccuracy = docs.length
+    ? Math.round(
+      docs.reduce((sum, doc) => sum + Number(doc.accuracy ?? doc.confidence ?? 0), 0) / docs.length
+    )
+    : 0;
 
   const stats = [
     { icon: FileText, label: "TOTAL DOCS", value: String(docs.length) },
     { icon: BarChart3, label: "THIS WEEK", value: String(thisWeek) },
     { icon: HardDrive, label: "STORAGE", value: `${(docs.length * 0.18).toFixed(1)}MB` },
-    { icon: Bot, label: "AI ACCURACY", value: "95%" },
+    { icon: Bot, label: "AI ACCURACY", value: `${aiAccuracy}%` },
     { icon: Zap, label: "AVG TIME", value: `${avgTime}s` },
     { icon: Search, label: "QUERIES", value: "12" },
   ];
@@ -100,33 +102,36 @@ export default function HomePage() {
               <p className="font-body text-sm text-muted-foreground mt-1">Upload your first document to get started</p>
             </div>
           ) : (
-            recent.map((doc) => (
+            recent.map((doc) => {
+              const score = Number(doc.accuracy ?? doc.confidence ?? 0);
+              return (
               <div key={doc._id} className="flex items-center gap-4 p-4 hover:bg-secondary/50 cursor-pointer transition-colors duration-200">
                 <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0 text-lg">
                   📄
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-body text-sm font-medium text-foreground truncate">{doc.filename}</p>
-                  <p className="font-mono text-[10px] text-muted-foreground">{doc.category} · {timeAgo(doc.createdAt)}</p>
+                  <p className="font-mono text-[10px] text-muted-foreground">{doc.category} · Uploaded {formatUploadedAt(doc.createdAt)}</p>
                 </div>
                 {/* Confidence bar */}
                 <div className="hidden sm:flex items-center gap-2 w-24">
                   <div className="flex-1 h-2 bg-muted rounded-sm overflow-hidden">
                     <div
-                      className={`h-full rounded-sm ${doc.confidence > 85 ? 'bg-success' : doc.confidence > 60 ? 'bg-warning' : 'bg-destructive'}`}
-                      style={{ width: `${doc.confidence}%` }}
+                      className={`h-full rounded-sm ${score > 85 ? 'bg-success' : score > 60 ? 'bg-warning' : 'bg-destructive'}`}
+                      style={{ width: `${score}%` }}
                     />
                   </div>
-                  <span className="font-mono text-[10px] text-muted-foreground w-8">{doc.confidence}%</span>
+                  <span className="font-mono text-[10px] text-muted-foreground w-8">{score}%</span>
                 </div>
                 <span className={`px-2 py-0.5 rounded-sm font-mono text-[10px] ${
-                  doc.confidence > 85 ? 'bg-success/10 text-success' : doc.confidence > 60 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'
+                  score > 85 ? 'bg-success/10 text-success' : score > 60 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'
                 }`}>
                   {doc.method}
                 </span>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />
               </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

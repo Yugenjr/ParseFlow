@@ -8,6 +8,7 @@ export interface BackendDocument {
   fileUrl?: string;
   document_type: string;
   category: string;
+  accuracy?: number;
   confidence: number;
   method: string;
   metadata: Record<string, unknown>;
@@ -25,9 +26,19 @@ export interface BackendDocument {
   classification?: {
     document_type?: string;
     category?: string;
+    accuracy?: number;
     confidence?: number;
     method?: string;
   };
+  createdAt: string;
+}
+
+export interface BackendNotification {
+  _id: string;
+  userId: string;
+  message: string;
+  type: 'STORAGE' | 'INSIGHT' | 'ORGANIZATION' | string;
+  read: boolean;
   createdAt: string;
 }
 
@@ -94,4 +105,13 @@ export async function queryDocBot(question: string, token: string): Promise<{ an
     answer: String(data.answer || "I couldn't find this in your documents."),
     documents_used: Number(data.documents_used || 0)
   };
+}
+
+export async function fetchRecentNotifications(token: string): Promise<BackendNotification[]> {
+  const resp = await axios.get(`${backendBaseUrl}/notifications`, {
+    headers: buildAuthHeaders(token)
+  });
+
+  const data = resp.data as { notifications?: BackendNotification[] };
+  return Array.isArray(data.notifications) ? data.notifications : [];
 }

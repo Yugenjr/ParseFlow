@@ -3,13 +3,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
 import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
 
-function timeAgo(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime();
-  const hours = Math.floor(diff / 3600000);
-  if (hours < 1) return 'just now';
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+function formatUploadedAt(ts: string): string {
+  const when = new Date(ts);
+  if (Number.isNaN(when.getTime())) return 'time unavailable';
+  return when.toLocaleString();
 }
 
 const filters = ["All", "Identity", "Financial", "Legal", "Compliance", "Tax", "Business"];
@@ -19,6 +16,14 @@ const statusIcon: Record<string, React.ReactNode> = {
   warning: <AlertTriangle className="h-4 w-4 text-warning" />,
   error: <X className="h-4 w-4 text-destructive" />,
 };
+
+function getHistoryStatus(item: BackendDocument): 'success' | 'warning' | 'error' {
+  const score = Number(item.accuracy ?? item.confidence ?? 0);
+  if (item.method === 'Storage Sync') return 'success';
+  if (score >= 80) return 'success';
+  if (score > 50) return 'warning';
+  return 'error';
+}
 
 export default function HistoryPage() {
   const { user, getAuthToken } = useAuth();
@@ -84,7 +89,9 @@ export default function HistoryPage() {
             <p className="font-heading text-2xl text-muted-foreground">NO RESULTS</p>
           </div>
         ) : (
-          filtered.map((item) => (
+          filtered.map((item) => {
+            const score = Number(item.accuracy ?? item.confidence ?? 0);
+            return (
             <div
               key={item._id}
               onClick={() => openDoc(item)}
@@ -96,22 +103,23 @@ export default function HistoryPage() {
               <div className="flex-1 min-w-0">
                 <p className="font-body text-sm font-medium text-foreground truncate">{item.filename}</p>
                 <p className="font-mono text-[10px] text-muted-foreground">
-                  {item.category} · {timeAgo(item.createdAt)}
+                  {item.category} · Uploaded {formatUploadedAt(item.createdAt)}
                 </p>
               </div>
               <div className="hidden sm:flex items-center gap-2 w-20">
                 <div className="flex-1 h-2 bg-muted rounded-sm overflow-hidden">
                   <div
-                    className={`h-full rounded-sm ${item.confidence > 85 ? 'bg-success' : item.confidence > 60 ? 'bg-warning' : 'bg-destructive'}`}
-                    style={{ width: `${item.confidence}%` }}
+                    className={`h-full rounded-sm ${score > 85 ? 'bg-success' : score > 60 ? 'bg-warning' : 'bg-destructive'}`}
+                    style={{ width: `${score}%` }}
                   />
                 </div>
-                <span className="font-mono text-[10px] text-muted-foreground">{item.confidence}%</span>
+                <span className="font-mono text-[10px] text-muted-foreground">{score}%</span>
               </div>
               <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary">{item.method}</span>
-              {statusIcon[item.confidence > 80 ? 'success' : item.confidence > 50 ? 'warning' : 'error']}
+              {statusIcon[getHistoryStatus(item)]}
             </div>
-          ))
+            );
+          })
         )}
       </div>
 
