@@ -5,7 +5,6 @@ const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { analyzeWithLLM } = require('./services/llmService');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
 
@@ -72,9 +71,31 @@ async function safeMoveFile(src, dest) {
 }
 
 const ML_SERVICE_URL = 'http://127.0.0.1:8001/predict';
-const OCR_SERVICE_URL = 'http://127.0.0.1:8002/extract';
 
 const CONFIDENCE_THRESHOLD = 0.80;
+
+function getDocTypeFromVisionResult(visionRes) {
+  return (visionRes && (visionRes.document_type || visionRes.documentType || visionRes.type || visionRes.label)) || null;
+}
+
+function isUnknownDocType(docType) {
+  if (!docType) return true;
+  const val = String(docType).trim().toLowerCase();
+  return val === '' || val === 'unknown' || val.includes('unknown');
+}
+
+function isIdentityClass(cls) {
+  if (!cls) return false;
+  const s = String(cls).toLowerCase();
+  return s.includes('aadhar') || s.includes('aadhaar') || s.includes('pan') || s.includes('passport') || s.includes('driving') || s.includes('license') || s.includes('licence');
+}
+
+function cleanFolderName(docType) {
+  if (!docType) return 'Other/Unknown';
+  const t = String(docType).replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
+  const parts = t.split(/\s+/).map(p => p.charAt(0).toUpperCase() + p.slice(1));
+  return (isIdentityClass(docType) ? 'Identity/' : 'Other/') + parts.join('_');
+}
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
@@ -82,12 +103,22 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'file required' });
     }
 
-    const originalPath = path.resolve(req.file.path);
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+    let originalPath = path.resolve(req.file.path);
+
+    // Multer temp files are extensionless by default; some PDF tools rely on .pdf extension.
+    if (ext) {
+      const currentExt = path.extname(originalPath).toLowerCase();
+      if (!currentExt || currentExt !== ext) {
+        const normalizedPath = `${originalPath}${ext}`;
+        await safeMoveFile(originalPath, normalizedPath);
+        originalPath = normalizedPath;
+      }
+    }
+
     console.log('Processing file:', originalPath);
 
-    const ext = path.extname(req.file.originalname || '').toLowerCase();
-
-    // prepare list of image paths to run ML on (single image by default)
+    // prepare list of image paths to process (single image by default)
     let processingPaths = [originalPath];
     let tempImages = [];
 
@@ -98,16 +129,98 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         processingPaths = imgs.map(p => path.resolve(p));
         tempImages = imgs.slice();
       } else {
-        console.log('PDF conversion produced no images; falling back to original file');
+        processingPaths = [];
+        console.log('PDF conversion produced no images; returning Unknown from Vision LLM flow');
       }
     }
 
-    console.log('Calling ML API on', processingPaths.length, 'image(s)...');
+    // PDF-specific path: Vision LLM only, sequential page probing.
+    // Try page1 -> page2 -> page3 and stop on first non-Unknown result.
+    if (ext === '.pdf') {
+      console.log('PDF Vision flow: processing up to 3 converted page image(s) sequentially');
 
-    // STEP 1: Call ML service on up to first 3 images
-    let bestMl = null;
+      let pdfVisionResult = null;
+      let lastVisionUnknown = null;
+
+      for (const p of processingPaths) {
+        try {
+          console.log('Vision LLM analyzing PDF page image:', p);
+          const visionRes = await analyzeImageWithLLM(p);
+          console.log('Vision LLM result for PDF page', p, visionRes);
+
+          const llmDocType = getDocTypeFromVisionResult(visionRes);
+          if (!isUnknownDocType(llmDocType)) {
+            pdfVisionResult = {
+              document_type: llmDocType,
+              folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType),
+              confidence: (visionRes && visionRes.confidence) || 0,
+              method: 'Vision LLM',
+              ...(visionRes || {})
+            };
+            break;
+          }
+
+          lastVisionUnknown = {
+            document_type: 'Unknown',
+            category: 'Other',
+            folder: 'Other/Unknown',
+            confidence: 0,
+            key_fields: {
+              name: null,
+              id_number: null,
+              date_of_birth: null,
+              document_number: null,
+              issuing_authority: null
+            },
+            method: 'Vision LLM',
+            ...(visionRes || {})
+          };
+        } catch (vErr) {
+          console.error('Vision LLM failed for PDF page', p, vErr && (vErr.message || vErr));
+        }
+      }
+
+      const finalPdfResult = pdfVisionResult || lastVisionUnknown || {
+        document_type: 'Unknown',
+        category: 'Other',
+        folder: 'Other/Unknown',
+        confidence: 0,
+        key_fields: {
+          name: null,
+          id_number: null,
+          date_of_birth: null,
+          document_number: null,
+          issuing_authority: null
+        },
+        method: 'Vision LLM'
+      };
+
+      try {
+        const folder = finalPdfResult.folder || cleanFolderName(finalPdfResult.document_type);
+        const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+        const targetDir = path.join(storageRoot, folder);
+        const targetPath = path.join(targetDir, req.file.originalname);
+        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+        await safeMoveFile(originalPath, targetPath);
+      } catch (e) {
+        console.error('Failed to move PDF original file to storage:', e.message || e);
+      }
+
+      cleanupFiles(tempImages);
+      for (const img of tempImages) {
+        try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
+      }
+
+      return res.json({ filename: req.file.originalname, result: finalPdfResult });
+    }
+
+    console.log('Processing', processingPaths.length, 'page(s) sequentially (ML -> Vision LLM fallback)...');
+
+    // Process pages in order: ML first, then Vision LLM for that page if ML confidence is low.
+    let finalResult = null;
     for (const p of processingPaths) {
       try {
+        // ML analysis
         const mlResponse = await axios.post(
           ML_SERVICE_URL,
           { file_path: p },
@@ -116,15 +229,32 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         console.log('ML Success for', p, mlResponse.data);
         const predictedClass = mlResponse.data.class || mlResponse.data['class'];
         const confidence = parseFloat(mlResponse.data.confidence || 0);
-        if (!bestMl || confidence > bestMl.confidence) {
-          bestMl = { predictedClass, confidence, file: p };
-        }
-        if (confidence >= CONFIDENCE_THRESHOLD) {
-          // high confidence — use this
-          console.log('ML HIGH CONFIDENCE -> RETURNING ML RESULT (from page)', p);
 
-          // move original file into storage based on predicted category
-          const folder = cleanFolderName(predictedClass);
+        if (confidence >= CONFIDENCE_THRESHOLD) {
+          // Good ML result — accept and return
+          console.log('ML HIGH CONFIDENCE -> RETURNING ML Result for', p);
+          finalResult = { document_type: predictedClass || 'Unknown', folder: cleanFolderName(predictedClass), confidence, method: 'ML' };
+        } else {
+          // ML low confidence — try Vision LLM for this page
+          console.log('ML low confidence (', confidence, ') — invoking Vision LLM on', p);
+          try {
+            const visionRes = await analyzeImageWithLLM(p);
+            console.log('Vision LLM result for', p, visionRes);
+            // decide whether vision result is meaningful
+            const llmDocType = getDocTypeFromVisionResult(visionRes);
+            if (!isUnknownDocType(llmDocType)) {
+              finalResult = { document_type: llmDocType, folder: (visionRes.folder || cleanFolderName(llmDocType)), confidence: (visionRes.confidence || 0), method: 'Vision LLM' };
+            } else {
+              console.log('Vision LLM returned unknown for', p, ' — continuing to next page');
+            }
+          } catch (vErr) {
+            console.error('Vision LLM failed for', p, vErr && (vErr.message || vErr));
+          }
+        }
+
+        // If we have a finalResult from either ML or Vision LLM, persist the original and return
+        if (finalResult) {
+          const folder = finalResult.folder || cleanFolderName(finalResult.document_type);
           const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
           const targetDir = path.join(storageRoot, folder);
           const targetPath = path.join(targetDir, req.file.originalname);
@@ -136,48 +266,18 @@ app.post('/upload', upload.single('file'), async (req, res) => {
             try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
           }
 
-          // cleanup temp images if any (try immediate cleanup, otherwise schedule background deletes)
+          // schedule cleanup of temporary images
           cleanupFiles(tempImages);
           for (const img of tempImages) {
-            try {
-              if (fs.existsSync(img)) cleanup.enqueueDelete(img);
-            } catch (e) {
-              console.error('enqueueDelete failed for', img, e && e.message);
-            }
+            try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
           }
 
-          return res.json({
-            filename: req.file.originalname,
-            result: {
-              document_type: predictedClass || 'Unknown',
-              folder,
-              confidence,
-              method: 'ML'
-            }
-          });
+          return res.json({ filename: req.file.originalname, result: finalResult });
         }
       } catch (e) {
         console.error('ML request failed for', p, e?.response?.data || e.message || e);
+        // continue to next page — do not abort entire request for single-page ML error
       }
-    }
-
-    // If any ML produced a best score >= threshold we would have returned.
-    // If we have a bestMl but below threshold, we'll fallback to Vision LLM.
-    if (bestMl) console.log('Best ML result:', bestMl.predictedClass, bestMl.confidence);
-
-    // helper: check if predicted class is an identity-type
-    function isIdentityClass(cls) {
-      if (!cls) return false;
-      const s = String(cls).toLowerCase();
-      return s.includes('aadhar') || s.includes('aadhaar') || s.includes('pan') || s.includes('passport') || s.includes('driving') || s.includes('license') || s.includes('licence');
-    }
-
-    function cleanFolderName(docType) {
-      if (!docType) return 'Other/Unknown';
-      // replace spaces and hyphens with underscore, title case words
-      const t = String(docType).replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
-      const parts = t.split(/\s+/).map(p => p.charAt(0).toUpperCase() + p.slice(1));
-      return (isIdentityClass(docType) ? 'Identity/' : 'Other/') + parts.join('_');
     }
 
     function inferIdFromFilename(fname) {
@@ -198,71 +298,21 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       return null;
     }
 
-    // If PDF conversion failed (no images produced) and the original file is a PDF,
-    // fall back to OCR + text LLM path.
-    if (ext === '.pdf' && tempImages.length === 0) {
-      console.log('PDF conversion failed — falling back to OCR + LLM');
-      try {
-        const ocrResponse = await axios.post(
-          OCR_SERVICE_URL,
-          { file_path: originalPath },
-          { timeout: 30000 }
-        );
-        const extractedText = (ocrResponse.data && ocrResponse.data.text) ? String(ocrResponse.data.text).slice(0, 3000) : '';
-        console.log('OCR TEXT PREVIEW:', extractedText.slice(0, 200));
-        const llmResult = await analyzeWithLLM(extractedText || '');
-
-        // move original file into storage based on LLM category/folder if provided
-        try {
-          const folder = (llmResult && llmResult.folder) ? llmResult.folder : cleanFolderName(llmResult && llmResult.document_type);
-          const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
-          const targetDir = path.join(storageRoot, folder);
-          if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-          const targetPath = path.join(targetDir, req.file.originalname);
-          try {
-            fs.renameSync(originalPath, targetPath);
-          } catch (e) {
-            console.error('Failed to move original file to storage (renameSync):', e.message || e);
-            try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
-          }
-        } catch (e) {
-          console.error('Storage move error:', e.message || e);
-        }
-
-        return res.json({
-          filename: req.file.originalname,
-          result: {
-            ...(llmResult || {}),
-            method: 'OCR + LLM'
-          }
-        });
-      } catch (e) {
-        console.error('OCR fallback failed:', e?.response?.data || e.message || e);
-        // continue to Vision LLM below as last resort
-      }
-    }
-
-    console.log('ML LOW CONFIDENCE -> USING VISION LLM on first page');
-
-    // STEP 3: Vision LLM (multimodal) — use first processing path (first page)
-    const visionInput = processingPaths[0] || originalPath;
-    const llmResult = await analyzeImageWithLLM(visionInput);
-
-    // move original file into storage based on LLM category/folder if provided
+    // No page produced a confident ML/LLM result. Final fallback: move original to Other/Unknown and return Unknown.
     try {
-      const folder = (llmResult && llmResult.folder) ? llmResult.folder : cleanFolderName(llmResult && llmResult.document_type);
+      const folder = 'Other/Unknown';
       const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
       const targetDir = path.join(storageRoot, folder);
-      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
       const targetPath = path.join(targetDir, req.file.originalname);
+      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
       try {
         await safeMoveFile(originalPath, targetPath);
       } catch (e) {
-        console.error('Failed to move original file to storage:', e.message || e);
+        console.error('Failed to move original file to storage (final fallback):', e.message || e);
         try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
       }
     } catch (e) {
-      console.error('Storage move error:', e.message || e);
+      console.error('Storage move error (final fallback):', e.message || e);
     }
 
     // cleanup temp images (immediate and schedule retries if any remain)
@@ -278,8 +328,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     return res.json({
       filename: req.file.originalname,
       result: {
-        ...(llmResult || {}),
-        method: 'Vision LLM'
+        document_type: 'Unknown',
+        folder: 'Other/Unknown',
+        confidence: 0,
+        method: 'Fallback'
       }
     });
 

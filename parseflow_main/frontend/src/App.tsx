@@ -16,6 +16,7 @@ import SettingsPage from "./pages/SettingsPage";
 import FeedbackPage from "./pages/FeedbackPage";
 import ExportPage from "./pages/ExportPage";
 import TransparencyPage from "./pages/TransparencyPage";
+import DocBotPage from "./pages/DocBotPage";
 import NotFound from "./pages/NotFound";
 import { ChatPanel } from "./components/ChatPanel";
 
@@ -52,6 +53,7 @@ const App = () => (
             <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
             <Route path="/feedback" element={<ProtectedRoute><FeedbackPage /></ProtectedRoute>} />
+            <Route path="/docbot" element={<ProtectedRoute><DocBotPage /></ProtectedRoute>} />
             <Route path="/export" element={<ProtectedRoute><ExportPage /></ProtectedRoute>} />
             <Route path="/transparency" element={<ProtectedRoute><TransparencyPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />

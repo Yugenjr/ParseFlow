@@ -12,6 +12,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { DocBotSidebar } from '@/components/DocBotSidebar';
 
 const navItems = [
   { title: "Home", url: "/", icon: Home },
@@ -19,6 +20,7 @@ const navItems = [
   { title: "Upload", url: "/upload", icon: Upload, isGradient: true },
   { title: "History", url: "/history", icon: History },
   { title: "Export", url: "/export", icon: Download },
+  { title: "DocBot", url: "/docbot", icon: FileText },
   { title: "Transparency", url: "/transparency", icon: Eye },
   { title: "Feedback", url: "/feedback", icon: MessageSquare },
   { title: "Settings", url: "/settings", icon: Settings },
@@ -67,7 +69,12 @@ export function AppSidebar() {
                         className={`h-5 w-5 shrink-0 ${item.isGradient ? "text-primary" : ""}`}
                       />
                       {!collapsed && (
-                        <span className="font-body text-sm">{item.title}</span>
+                          <div className="flex flex-col">
+                            <span className="font-body text-sm">{item.title}</span>
+                            {item.title === 'DocBot' && (
+                              <span className="text-xs text-muted-foreground">ask me about your vault</span>
+                            )}
+                          </div>
                       )}
                     </NavLink>
                   </SidebarMenuButton>
@@ -77,7 +84,12 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Logout */}
+          {/* DocBot (inline in sidebar) */}
+          <div className="px-2">
+            <DocBotSidebar />
+          </div>
+
+          {/* Logout */}
         <div className="p-4 border-t border-border">
           <button
             onClick={handleLogout}
