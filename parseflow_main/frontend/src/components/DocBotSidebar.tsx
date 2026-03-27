@@ -1,33 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getDocsByUser, type Document } from '@/lib/indexeddb';
+import { fetchUserDocuments, type BackendDocument } from '@/lib/backend-api';
 
 type Message = { role: 'user' | 'bot'; text: string };
 
-function getDocResponse(input: string, docs: Document[]): string {
+function getDocResponse(input: string, docs: BackendDocument[]): string {
   const lower = input.toLowerCase();
 
   if (lower.includes('pan') && lower.includes('number')) {
     const pan = docs.find(d => d.filename.toLowerCase().includes('pan'));
-    if (pan?.extraction?.PAN) return `Your PAN number is ${pan.extraction.PAN} (from ${pan.filename})`;
+    const panValue = (pan?.metadata?.PAN || pan?.metadata?.id_number || pan?.metadata?.document_number) as string | undefined;
+    if (panValue) return `Your PAN number is ${panValue} (from ${pan.filename})`;
     return 'No PAN card found in your vault.';
   }
 
   if (lower.includes('aadhaar') || lower.includes('aadhar') || lower.includes('uid')) {
-    const aadhaar = docs.find(d => d.filename.toLowerCase().includes('aadhaar'));
-    if (aadhaar?.extraction?.UID) return `Your Aadhaar UID is ${aadhaar.extraction.UID} (from ${aadhaar.filename})`;
+    const aadhaar = docs.find(d => d.filename.toLowerCase().includes('aadhaar') || d.filename.toLowerCase().includes('aadhar'));
+    const uid = (aadhaar?.metadata?.UID || aadhaar?.metadata?.id_number || aadhaar?.metadata?.document_number) as string | undefined;
+    if (uid) return `Your Aadhaar UID is ${uid} (from ${aadhaar.filename})`;
     return 'No Aadhaar card found in your vault.';
   }
 
   if (lower.includes('passport')) {
     const passport = docs.find(d => d.filename.toLowerCase().includes('passport'));
-    if (passport?.extraction?.['Passport No']) return `Passport No: ${passport.extraction['Passport No']}, Expiry: ${passport.extraction.Expiry || 'N/A'}`;
+    const passportNo = (passport?.metadata?.['Passport No'] || passport?.metadata?.document_number || passport?.metadata?.id_number) as string | undefined;
+    const expiry = (passport?.metadata?.Expiry || passport?.metadata?.expiry_date) as string | undefined;
+    if (passportNo) return `Passport No: ${passportNo}, Expiry: ${expiry || 'N/A'}`;
     return 'No passport found in your vault.';
   }
 
   if (lower.includes('invoice') || lower.includes('amount') || lower.includes('total')) {
-    const inv = docs.find(d => d.category === 'Financial' && d.filename.toLowerCase().includes('invoice'));
-    if (inv?.extraction) return `Latest invoice: ${inv.extraction['Invoice No'] || inv.filename} — Total: ${inv.extraction.Total || inv.extraction.Amount || 'N/A'}`;
+    const inv = docs.find(d => d.category === 'Financial' && (d.filename.toLowerCase().includes('invoice') || d.document_type.toLowerCase().includes('receipt')));
+    const invNo = (inv?.metadata?.['Invoice No'] || inv?.metadata?.document_number) as string | undefined;
+    const amount = (inv?.metadata?.Total || inv?.metadata?.Amount || inv?.metadata?.amount) as string | undefined;
+    if (inv) return `Latest invoice: ${invNo || inv.filename} - Total: ${amount || 'N/A'}`;
     return 'No invoices found in your vault.';
   }
 
@@ -43,7 +49,10 @@ function getDocResponse(input: string, docs: Document[]): string {
 
   if (lower.includes('salary') || lower.includes('income')) {
     const sal = docs.find(d => d.filename.toLowerCase().includes('salary'));
-    if (sal?.extraction) return `Latest salary: Gross ${sal.extraction.Gross || 'N/A'}, Net ${sal.extraction.Net || 'N/A'} (${sal.extraction.Month || ''})`;
+    const gross = (sal?.metadata?.Gross || sal?.metadata?.gross_amount) as string | undefined;
+    const net = (sal?.metadata?.Net || sal?.metadata?.net_amount) as string | undefined;
+    const month = (sal?.metadata?.Month || sal?.metadata?.month) as string | undefined;
+    if (sal) return `Latest salary: Gross ${gross || 'N/A'}, Net ${net || 'N/A'} (${month || ''})`;
     return 'No salary slips found in your vault.';
   }
 
@@ -51,17 +60,24 @@ function getDocResponse(input: string, docs: Document[]): string {
 }
 
 export function DocBotSidebar() {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     { role: 'bot', text: 'Ask me about your vault: PAN, Aadhaar, passports, invoices, counts.' },
   ]);
   const [input, setInput] = useState('');
-  const [docs, setDocs] = useState<Document[]>([]);
+  const [docs, setDocs] = useState<BackendDocument[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (user) getDocsByUser(user.id).then(setDocs);
-  }, [user]);
+    const load = async () => {
+      if (!user) return;
+      const token = await getAuthToken();
+      if (!token) return;
+      const backendDocs = await fetchUserDocuments(token);
+      setDocs(backendDocs);
+    };
+    load().catch(() => setDocs([]));
+  }, [user, getAuthToken]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });

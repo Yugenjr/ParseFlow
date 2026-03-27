@@ -12,7 +12,7 @@ OBJECTIVE:
 2. Identify the document type (Aadhaar Card, PAN Card, Passport, Driving License, Bank Statement, Invoice, Receipt, Tax Document, Legal Agreement, Business Registration, Unknown).
 3. Extract key fields when present (name, id_number, date_of_birth, document_number, issuing_authority).
 4. Assign storage category (Identity, Financial, Legal, Tax, Business, Other) and suggest folder (Category/Document_Type).
-5. Provide a confidence score between 0 and 1.
+5. Provide a confidence score as a percentage between 0 and 100 (integer preferred).
 
 RULES:
 - NEVER return text outside JSON.
@@ -24,7 +24,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
   "document_type": "",
   "category": "",
   "folder": "",
-  "confidence": 0.0,
+  "confidence": 0,
   "key_fields": {
     "name": null,
     "id_number": null,
@@ -34,6 +34,27 @@ OUTPUT FORMAT (STRICT JSON ONLY):
   }
 }
 `;
+
+function normalizeConfidencePercent(value) {
+  if (value === null || value === undefined) return 0;
+
+  let num = value;
+  if (typeof num === 'string') {
+    const cleaned = num.replace('%', '').trim();
+    num = Number(cleaned);
+  }
+
+  if (!Number.isFinite(num)) return 0;
+
+  // Convert 0..1 fractions into 0..100 percentages.
+  if (num > 0 && num <= 1) {
+    num = num * 100;
+  }
+
+  if (num < 0) return 0;
+  if (num > 100) return 100;
+  return Math.round(num);
+}
 
 async function analyzeImageWithLLM(filePath) {
   try {
@@ -87,7 +108,9 @@ async function analyzeImageWithLLM(filePath) {
       if (start !== -1 && end !== -1 && end > start) {
         const jsonStr = output.slice(start, end + 1);
         try {
-          return JSON.parse(jsonStr);
+          const parsed = JSON.parse(jsonStr);
+          parsed.confidence = normalizeConfidencePercent(parsed.confidence);
+          return parsed;
         } catch (e) {
           console.error('Vision LLM JSON parse error:', e.message);
         }
@@ -95,7 +118,10 @@ async function analyzeImageWithLLM(filePath) {
     }
 
     // If provider returned structured object already
-    if (typeof output === 'object') return output;
+    if (typeof output === 'object') {
+      output.confidence = normalizeConfidencePercent(output.confidence);
+      return output;
+    }
 
     // Fallback
     return {

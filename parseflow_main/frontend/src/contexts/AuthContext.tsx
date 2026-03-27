@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useAuth as useClerkAuth, useUser } from '@clerk/react';
-import { seedDemoData, type User } from '@/lib/indexeddb';
+import type { User } from '@/lib/indexeddb';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   logout: () => void;
   syncUser: () => Promise<void>;
+  getAuthToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -15,12 +16,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn, user: clerkUser } = useUser();
   const { getToken, signOut } = useClerkAuth();
   const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-
-  useEffect(() => {
-    seedDemoData().catch(() => {
-      // keep auth resilient if demo seed fails
-    });
-  }, []);
 
   const user = useMemo<User | null>(() => {
     if (!isSignedIn || !clerkUser) return null;
@@ -35,7 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const syncUser = useCallback(async () => {
     if (!isSignedIn) return;
-    const token = await getToken();
+    const token = await getToken({ skipCache: true });
     if (!token) return;
 
     const resp = await fetch(`${backendBaseUrl}/api/auth/sync-user`, {
@@ -49,6 +44,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Failed to sync user');
     }
   }, [backendBaseUrl, getToken, isSignedIn]);
+
+  const getAuthToken = useCallback(async () => {
+    if (!isSignedIn) return null;
+    const token = await getToken({ skipCache: true });
+    return token || null;
+  }, [getToken, isSignedIn]);
 
   useEffect(() => {
     if (!user) return;
@@ -69,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loading = !isLoaded;
 
   return (
-    <AuthContext.Provider value={{ user, loading, logout, syncUser }}>
+    <AuthContext.Provider value={{ user, loading, logout, syncUser, getAuthToken }}>
       {children}
     </AuthContext.Provider>
   );

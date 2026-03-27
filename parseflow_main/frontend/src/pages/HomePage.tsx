@@ -2,7 +2,7 @@ import { FileText, BarChart3, HardDrive, Upload, Camera, Clock, FolderOpen, Chev
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
-import { getDocsByUser, type Document } from "@/lib/indexeddb";
+import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
 
 function timeAgo(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();
@@ -15,16 +15,23 @@ function timeAgo(ts: string): string {
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [docs, setDocs] = useState<Document[]>([]);
+  const { user, getAuthToken } = useAuth();
+  const [docs, setDocs] = useState<BackendDocument[]>([]);
 
   useEffect(() => {
-    if (user) getDocsByUser(user.id).then(setDocs);
-  }, [user]);
+    const load = async () => {
+      if (!user) return;
+      const token = await getAuthToken();
+      if (!token) return;
+      const backendDocs = await fetchUserDocuments(token);
+      setDocs(backendDocs);
+    };
+    load().catch(() => setDocs([]));
+  }, [user, getAuthToken]);
 
-  const thisWeek = docs.filter(d => Date.now() - new Date(d.timestamp).getTime() < 7 * 86400000).length;
+  const thisWeek = docs.filter(d => Date.now() - new Date(d.createdAt).getTime() < 7 * 86400000).length;
   const avgConf = docs.length ? Math.round(docs.reduce((s, d) => s + d.confidence, 0) / docs.length) : 0;
-  const avgTime = docs.length ? (docs.reduce((s, d) => s + d.processingTime, 0) / docs.length / 1000).toFixed(1) : '0';
+  const avgTime = "0.9";
 
   const stats = [
     { icon: FileText, label: "TOTAL DOCS", value: String(docs.length) },
@@ -42,7 +49,7 @@ export default function HomePage() {
     { icon: FolderOpen, label: "ORGANIZE", route: "/documents" },
   ];
 
-  const recent = [...docs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 5);
+  const recent = [...docs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
 
   return (
     <div className="space-y-8 max-w-6xl">
@@ -95,13 +102,13 @@ export default function HomePage() {
             </div>
           ) : (
             recent.map((doc) => (
-              <div key={doc.id} className="flex items-center gap-4 p-4 hover:bg-secondary/50 cursor-pointer transition-colors duration-200">
+              <div key={doc._id} className="flex items-center gap-4 p-4 hover:bg-secondary/50 cursor-pointer transition-colors duration-200">
                 <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0 text-lg">
-                  {doc.thumbnail}
+                  📄
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-body text-sm font-medium text-foreground truncate">{doc.filename}</p>
-                  <p className="font-mono text-[10px] text-muted-foreground">{doc.category} · {timeAgo(doc.timestamp)}</p>
+                  <p className="font-mono text-[10px] text-muted-foreground">{doc.category} · {timeAgo(doc.createdAt)}</p>
                 </div>
                 {/* Confidence bar */}
                 <div className="hidden sm:flex items-center gap-2 w-24">
@@ -116,7 +123,7 @@ export default function HomePage() {
                 <span className={`px-2 py-0.5 rounded-sm font-mono text-[10px] ${
                   doc.confidence > 85 ? 'bg-success/10 text-success' : doc.confidence > 60 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'
                 }`}>
-                  {doc.source}
+                  {doc.method}
                 </span>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />
               </div>

@@ -1,19 +1,25 @@
-import { Upload, CloudUpload, X, FileText } from "lucide-react";
-import { useState, useCallback } from "react";
+import { Upload, CloudUpload, X, FileText, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useState, useCallback, useMemo, useRef } from "react";
+import { uploadDocument } from "@/lib/backend-api";
+import { useAuth } from "@/contexts/AuthContext";
+import axios from "axios";
 
 interface QueueItem {
   id: string;
+  file: File;
   name: string;
   size: string;
   progress: number;
+  status: "queued" | "uploading" | "done" | "error";
+  message?: string;
 }
 
 export default function UploadPage() {
-  const [queue, setQueue] = useState<QueueItem[]>([
-    { id: "1", name: "Invoice_March.pdf", size: "2.4 MB", progress: 75 },
-    { id: "2", name: "ID_Card_Front.jpg", size: "1.1 MB", progress: 30 },
-  ]);
+  const { getAuthToken, syncUser } = useAuth();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [lastResultJson, setLastResultJson] = useState<string>("");
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -22,7 +28,132 @@ export default function UploadPage() {
 
   const handleDragLeave = useCallback(() => setIsDragging(false), []);
 
+  const humanSize = (bytes: number) => {
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${bytes} B`;
+  };
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const acceptedExt = new Set(["pdf", "jpg", "jpeg", "png"]);
+    const acceptedMime = new Set(["application/pdf", "image/jpeg", "image/png"]);
+    const maxSizeBytes = 25 * 1024 * 1024;
+
+    const items: QueueItem[] = Array.from(files).map((file) => {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "";
+      const extOk = acceptedExt.has(ext);
+      const mimeOk = !file.type || acceptedMime.has(file.type);
+      const sizeOk = file.size <= maxSizeBytes;
+
+      if (!extOk || !mimeOk) {
+        return {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          file,
+          name: file.name,
+          size: humanSize(file.size),
+          progress: 100,
+          status: "error",
+          message: "Unsupported file type. Use PDF, JPG, or PNG."
+        };
+      }
+
+      if (!sizeOk) {
+        return {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          file,
+          name: file.name,
+          size: humanSize(file.size),
+          progress: 100,
+          status: "error",
+          message: "File exceeds 25MB limit."
+        };
+      }
+
+      return {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        name: file.name,
+        size: humanSize(file.size),
+        progress: 0,
+        status: "queued"
+      };
+    });
+
+    setQueue((q) => [...q, ...items]);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFiles(e.dataTransfer.files);
+      e.dataTransfer.clearData();
+    }
+  }, [addFiles]);
+
+  const handleChooseFiles = () => {
+    inputRef.current?.click();
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      addFiles(e.target.files);
+      e.target.value = "";
+    }
+  };
+
   const removeItem = (id: string) => setQueue((q) => q.filter((i) => i.id !== id));
+
+  const isUploading = useMemo(() => queue.some((q) => q.status === "uploading"), [queue]);
+
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const getReliableToken = async () => {
+    // Clerk token can be briefly unavailable right after redirect; retry a few times.
+    for (let i = 0; i < 6; i++) {
+      const token = await getAuthToken();
+      if (token) return token;
+      await wait(250);
+    }
+    return null;
+  };
+
+  const uploadAll = async () => {
+    if (isUploading) return;
+    await syncUser().catch(() => {
+      // Continue and let token/upload path surface concrete error.
+    });
+
+    const token = await getReliableToken();
+    if (!token) {
+      setQueue((prev) => prev.map((item) => ({
+        ...item,
+        status: item.status === "queued" ? "error" : item.status,
+        progress: item.status === "queued" ? 100 : item.progress,
+        message: item.status === "queued" ? "Authentication token missing. Please sign out and sign in again." : item.message
+      })));
+      return;
+    }
+
+    const queuedItems = queue.filter((q) => q.status === "queued" || q.status === "error");
+    for (const item of queuedItems) {
+      setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "uploading", progress: 0, message: undefined } : q));
+      try {
+        const payload = await uploadDocument(item.file, token, (percent) => {
+          setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, progress: percent, status: "uploading" } : q));
+        });
+        setLastResultJson(JSON.stringify(payload.result, null, 2));
+        setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "done", progress: 100, message: String(payload.result?.document_type || "Processed") } : q));
+      } catch (err) {
+        const message = axios.isAxiosError(err)
+          ? String(err.response?.data?.error || err.message || "Upload failed")
+          : err instanceof Error
+            ? err.message
+            : "Upload failed";
+        setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "error", progress: 100, message } : q));
+      }
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -32,7 +163,7 @@ export default function UploadPage() {
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        onDrop={handleDragLeave}
+        onDrop={handleDrop}
         className={`border-3 border-dashed p-12 flex flex-col items-center gap-4 transition-all duration-200 rounded-sm ${
           isDragging ? "border-primary bg-secondary" : "border-primary/40 bg-secondary/30"
         }`}
@@ -46,7 +177,18 @@ export default function UploadPage() {
           <p className="text-muted-foreground font-body text-sm mt-1">or tap to browse</p>
           <p className="font-mono text-[10px] text-muted-foreground mt-2">PDF / JPG / PNG · MAX 25MB</p>
         </div>
-        <button className="mt-2 h-12 px-8 gradient-primary text-primary-foreground font-heading text-lg tracking-wider rounded-sm hover:opacity-90 active:scale-[0.97] transition-all duration-200">
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png"
+          multiple
+          onChange={handleInputChange}
+          className="hidden"
+        />
+        <button
+          onClick={handleChooseFiles}
+          className="mt-2 h-12 px-8 gradient-primary text-primary-foreground font-heading text-lg tracking-wider rounded-sm hover:opacity-90 active:scale-[0.97] transition-all duration-200"
+        >
           <Upload className="h-4 w-4 mr-2 inline" />
           CHOOSE FILES
         </button>
@@ -73,17 +215,37 @@ export default function UploadPage() {
                       style={{ width: `${item.progress}%` }}
                     />
                   </div>
+                  {item.message && (
+                    <p className={`mt-1 font-mono text-[10px] ${item.status === "error" ? "text-destructive" : "text-muted-foreground"}`}>
+                      {item.message}
+                    </p>
+                  )}
                 </div>
                 <span className="font-mono text-xs font-semibold text-primary ml-2">{item.progress}%</span>
+                {item.status === "done" && <CheckCircle2 className="h-4 w-4 text-success" />}
+                {item.status === "error" && <AlertTriangle className="h-4 w-4 text-destructive" />}
                 <button onClick={() => removeItem(item.id)} className="text-muted-foreground hover:text-destructive transition-colors duration-200">
                   <X className="h-4 w-4" />
                 </button>
               </div>
             ))}
           </div>
-          <button className="w-full h-12 gradient-primary text-primary-foreground font-heading text-xl tracking-wider rounded-sm hover:opacity-90 active:scale-[0.97] transition-all duration-200">
+          <button
+            onClick={uploadAll}
+            disabled={queue.length === 0 || isUploading}
+            className="w-full h-12 gradient-primary text-primary-foreground font-heading text-xl tracking-wider rounded-sm hover:opacity-90 active:scale-[0.97] transition-all duration-200 disabled:opacity-60"
+          >
             UPLOAD ALL
           </button>
+        </div>
+      )}
+
+      {lastResultJson && (
+        <div className="card-brutal">
+          <h3 className="font-heading text-xl text-foreground tracking-wider mb-2">LATEST MODEL OUTPUT</h3>
+          <pre className="bg-background border border-border rounded-sm p-3 font-mono text-xs overflow-x-auto">
+            {lastResultJson}
+          </pre>
         </div>
       )}
     </div>

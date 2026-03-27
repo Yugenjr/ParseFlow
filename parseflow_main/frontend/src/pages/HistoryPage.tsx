@@ -1,7 +1,7 @@
 import { Search, FileText, Check, AlertTriangle, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
-import { getDocsByUser, type Document } from "@/lib/indexeddb";
+import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
 
 function timeAgo(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();
@@ -21,18 +21,31 @@ const statusIcon: Record<string, React.ReactNode> = {
 };
 
 export default function HistoryPage() {
-  const { user } = useAuth();
-  const [docs, setDocs] = useState<Document[]>([]);
+  const { user, getAuthToken } = useAuth();
+  const [docs, setDocs] = useState<BackendDocument[]>([]);
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    if (user) getDocsByUser(user.id).then(d => setDocs(d.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())));
-  }, [user]);
+    const load = async () => {
+      if (!user) return;
+      const token = await getAuthToken();
+      if (!token) return;
+      const backendDocs = await fetchUserDocuments(token);
+      setDocs(backendDocs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    };
+    load().catch(() => setDocs([]));
+  }, [user, getAuthToken]);
 
   const filtered = docs
     .filter(d => filter === "All" || d.category === filter)
     .filter(d => !search || d.filename.toLowerCase().includes(search.toLowerCase()));
+
+  const openDoc = (doc: BackendDocument) => {
+    if (!doc.fileUrl) return;
+    const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+    window.open(`${backendBaseUrl}${doc.fileUrl}`, '_blank');
+  };
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -72,14 +85,18 @@ export default function HistoryPage() {
           </div>
         ) : (
           filtered.map((item) => (
-            <div key={item.id} className="card-brutal card-brutal-hover flex items-center gap-4">
+            <div
+              key={item._id}
+              onClick={() => openDoc(item)}
+              className={`card-brutal card-brutal-hover flex items-center gap-4 ${item.fileUrl ? 'cursor-pointer' : ''}`}
+            >
               <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0 text-lg">
-                {item.thumbnail}
+                📄
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-body text-sm font-medium text-foreground truncate">{item.filename}</p>
                 <p className="font-mono text-[10px] text-muted-foreground">
-                  {item.category} · {timeAgo(item.timestamp)}
+                  {item.category} · {timeAgo(item.createdAt)}
                 </p>
               </div>
               <div className="hidden sm:flex items-center gap-2 w-20">
@@ -91,8 +108,8 @@ export default function HistoryPage() {
                 </div>
                 <span className="font-mono text-[10px] text-muted-foreground">{item.confidence}%</span>
               </div>
-              <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary">{item.source}</span>
-              {statusIcon[item.status]}
+              <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary">{item.method}</span>
+              {statusIcon[item.confidence > 80 ? 'success' : item.confidence > 50 ? 'warning' : 'error']}
             </div>
           ))
         )}

@@ -1,18 +1,30 @@
 const mongoose = require('mongoose');
 
 const documentSchema = new mongoose.Schema({
-  clerkId: { type: String, required: true, index: true },
+  userId: { type: String, required: true, index: true },
   filename: { type: String, required: true },
-  mimeType: { type: String, default: null },
-  sizeBytes: { type: Number, default: 0 },
-  storagePath: { type: String, required: true },
-  storageFolder: { type: String, required: true },
-  documentType: { type: String, default: 'Unknown' },
+  filePath: { type: String, required: true },
+  document_type: { type: String, default: 'Unknown' },
   category: { type: String, default: 'Other' },
   confidence: { type: Number, default: 0 },
   method: { type: String, default: 'Unknown' },
-  result: { type: mongoose.Schema.Types.Mixed, required: true },
+  metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+  storage: {
+    category: { type: String, default: 'Other' },
+    docType: { type: String, default: 'Unknown' },
+    filePath: { type: String, default: '' },
+    fileUrl: { type: String, default: '' }
+  },
+  classification: {
+    document_type: { type: String, default: 'Unknown' },
+    category: { type: String, default: 'Other' },
+    confidence: { type: Number, default: 0 },
+    method: { type: String, default: 'Unknown' }
+  },
   createdAt: { type: Date, default: Date.now }
 });
+
+documentSchema.index({ userId: 1, createdAt: -1 });
+documentSchema.index({ userId: 1, category: 1 });
 
 module.exports = mongoose.model('Document', documentSchema);

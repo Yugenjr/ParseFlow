@@ -8,6 +8,7 @@ const path = require('path');
 const { createClerkClient } = require('@clerk/backend');
 const { connectDB } = require('./config/db');
 const User = require('./models/User');
+const Document = require('./models/Document');
 const { authMiddleware } = require('./middleware/authMiddleware');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
@@ -15,6 +16,8 @@ const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use('/files', express.static(path.resolve(path.join(__dirname, '..', '..', 'storage'))));
+const STORAGE_ROOT = path.resolve(path.join(__dirname, '..', '..', 'storage'));
 
 // Store uploads in backend/uploads (one level above src)
 const UPLOADS_DIR = path.resolve(path.join(__dirname, '..', 'uploads'));
@@ -81,6 +84,26 @@ async function safeMoveFile(src, dest) {
 const ML_SERVICE_URL = 'http://127.0.0.1:8001/predict';
 
 const CONFIDENCE_THRESHOLD = 0.80;
+
+function normalizeConfidencePercent(value) {
+  if (value === null || value === undefined) return 0;
+
+  let num = value;
+  if (typeof num === 'string') {
+    const cleaned = num.replace('%', '').trim();
+    num = Number(cleaned);
+  }
+
+  if (!Number.isFinite(num)) return 0;
+
+  if (num > 0 && num <= 1) {
+    num = num * 100;
+  }
+
+  if (num < 0) return 0;
+  if (num > 100) return 100;
+  return Math.round(num);
+}
 
 function getDocTypeFromVisionResult(visionRes) {
   return (visionRes && (visionRes.document_type || visionRes.documentType || visionRes.type || visionRes.label)) || null;
@@ -187,6 +210,190 @@ async function upsertUserFromAuth(req) {
   return user;
 }
 
+function deriveCategory(result) {
+  if (result && result.category) return String(result.category);
+  if (!result || !result.folder) return 'Other';
+  const folder = String(result.folder);
+  return folder.includes('/') ? folder.split('/')[0] : 'Other';
+}
+
+function deriveDocType(result) {
+  const raw = (result && result.document_type) || 'Unknown';
+  return String(raw).trim() || 'Unknown';
+}
+
+function createStorageTarget({ userId, result, filename }) {
+  const category = deriveCategory(result) || 'Other';
+  const docType = deriveDocType(result).replace(/\s+/g, '_');
+  const targetDir = path.resolve(path.join(__dirname, '..', '..', 'storage', userId, category, docType));
+  const targetPath = path.join(targetDir, filename);
+  return { category, docType, targetDir, targetPath };
+}
+
+function makeFileUrl(filePathAbs) {
+  const relative = path.relative(STORAGE_ROOT, filePathAbs).split(path.sep).join('/');
+  return `/files/${relative}`;
+}
+
+function listFilesRecursive(rootDir) {
+  if (!fs.existsSync(rootDir)) return [];
+  const out = [];
+  const stack = [rootDir];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const p = path.join(current, entry.name);
+      if (entry.isDirectory()) stack.push(p);
+      else out.push(path.resolve(p));
+    }
+  }
+
+  return out;
+}
+
+function inferFromStoragePath(userId, filePathAbs) {
+  const rel = path.relative(path.join(STORAGE_ROOT, userId), filePathAbs).split(path.sep);
+  const category = rel[0] || 'Other';
+  const docType = rel[1] || 'Unknown';
+  const document_type = String(docType).replace(/_/g, ' ');
+  return { category, docType, document_type };
+}
+
+async function syncStorageForUser(userId) {
+  const userRoot = path.join(STORAGE_ROOT, userId);
+  const files = listFilesRecursive(userRoot);
+  let created = 0;
+  let updated = 0;
+
+  for (const filePathAbs of files) {
+    const filename = path.basename(filePathAbs);
+    const inferred = inferFromStoragePath(userId, filePathAbs);
+    const fileUrl = makeFileUrl(filePathAbs);
+
+    const existing = await Document.findOne({ userId, filePath: filePathAbs });
+    if (!existing) {
+      await Document.create({
+        userId,
+        filename,
+        filePath: filePathAbs,
+        document_type: inferred.document_type,
+        category: inferred.category,
+        confidence: 0,
+        method: 'Storage Sync',
+        metadata: {},
+        storage: {
+          category: inferred.category,
+          docType: inferred.docType,
+          filePath: filePathAbs,
+          fileUrl
+        },
+        classification: {
+          document_type: inferred.document_type,
+          category: inferred.category,
+          confidence: 0,
+          method: 'Storage Sync'
+        }
+      });
+      created += 1;
+      continue;
+    }
+
+    let changed = false;
+    if (!existing.storage || !existing.storage.filePath) {
+      existing.storage = {
+        category: inferred.category,
+        docType: inferred.docType,
+        filePath: filePathAbs,
+        fileUrl
+      };
+      changed = true;
+    }
+    if (!existing.classification || !existing.classification.document_type) {
+      existing.classification = {
+        document_type: existing.document_type || inferred.document_type,
+        category: existing.category || inferred.category,
+        confidence: Number(existing.confidence || 0),
+        method: existing.method || 'Storage Sync'
+      };
+      changed = true;
+    }
+    if (!existing.category) {
+      existing.category = inferred.category;
+      changed = true;
+    }
+    if (!existing.document_type) {
+      existing.document_type = inferred.document_type;
+      changed = true;
+    }
+    if (changed) {
+      await existing.save();
+      updated += 1;
+    }
+  }
+
+  return { userId, scanned: files.length, created, updated };
+}
+
+async function syncAllExistingStorageForUsers() {
+  const userIds = new Set();
+  const users = await User.find({}, { clerkId: 1 }).lean();
+  for (const u of users) {
+    if (u && u.clerkId) userIds.add(String(u.clerkId));
+  }
+
+  const storageEntries = fs.existsSync(STORAGE_ROOT)
+    ? fs.readdirSync(STORAGE_ROOT, { withFileTypes: true })
+    : [];
+  for (const entry of storageEntries) {
+    if (entry.isDirectory()) userIds.add(entry.name);
+  }
+
+  let totalScanned = 0;
+  let totalCreated = 0;
+  let totalUpdated = 0;
+
+  for (const userId of userIds) {
+    const result = await syncStorageForUser(userId);
+    totalScanned += result.scanned;
+    totalCreated += result.created;
+    totalUpdated += result.updated;
+  }
+
+  console.log(`Storage sync complete. users=${userIds.size}, scanned=${totalScanned}, created=${totalCreated}, updated=${totalUpdated}`);
+}
+
+async function persistDocumentForUser({ req, result, filePath }) {
+  const category = deriveCategory(result);
+  const docType = deriveDocType(result).replace(/\s+/g, '_');
+  const fileUrl = makeFileUrl(filePath);
+  const confidence = normalizeConfidencePercent(result && result.confidence);
+  return Document.create({
+    userId: req.userId,
+    filename: req.file.originalname,
+    filePath,
+    document_type: deriveDocType(result),
+    category,
+    confidence,
+    method: (result && result.method) || 'Unknown',
+    metadata: (result && result.key_fields) || {},
+    storage: {
+      category,
+      docType,
+      filePath,
+      fileUrl
+    },
+    classification: {
+      document_type: deriveDocType(result),
+      category,
+      confidence,
+      method: (result && result.method) || 'Unknown'
+    }
+  });
+}
+
 app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
   try {
     if (!clerkClient) {
@@ -201,6 +408,61 @@ app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'User sync failed' });
+  }
+});
+
+app.get('/api/documents', authMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
+    const docs = await Document.find({ userId: req.userId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const hydrated = docs.map((doc) => ({
+      ...doc,
+      confidence: normalizeConfidencePercent(doc.confidence),
+      classification: {
+        ...(doc.classification || {}),
+        confidence: normalizeConfidencePercent(doc.classification && doc.classification.confidence)
+      },
+      fileUrl: makeFileUrl(doc.filePath)
+    }));
+
+    return res.json({ documents: hydrated });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch documents' });
+  }
+});
+
+app.get('/documents', authMiddleware, async (req, res) => {
+  try {
+    const docs = await Document.find({ userId: req.userId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const hydrated = docs.map((doc) => ({
+      ...doc,
+      confidence: normalizeConfidencePercent(doc.confidence),
+      classification: {
+        ...(doc.classification || {}),
+        confidence: normalizeConfidencePercent(doc.classification && doc.classification.confidence)
+      },
+      fileUrl: makeFileUrl(doc.filePath)
+    }));
+
+    return res.json(hydrated);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch documents' });
+  }
+});
+
+app.post('/api/sync-storage', authMiddleware, async (req, res) => {
+  try {
+    const result = await syncStorageForUser(req.userId);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Storage sync failed' });
   }
 });
 
@@ -264,11 +526,11 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
           const llmDocType = getDocTypeFromVisionResult(visionRes);
           if (!isUnknownDocType(llmDocType)) {
             pdfVisionResult = {
+              ...(visionRes || {}),
               document_type: llmDocType,
               folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType),
-              confidence: (visionRes && visionRes.confidence) || 0,
-              method: 'Vision LLM',
-              ...(visionRes || {})
+              confidence: normalizeConfidencePercent(visionRes && visionRes.confidence),
+              method: 'Vision LLM'
             };
             break;
           }
@@ -307,14 +569,25 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         },
         method: 'Vision LLM'
       };
+      finalPdfResult.confidence = normalizeConfidencePercent(finalPdfResult.confidence);
 
       try {
-        const folder = finalPdfResult.folder || cleanFolderName(finalPdfResult.document_type);
-        const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage', req.userId));
-        const targetDir = path.join(storageRoot, folder);
-        const targetPath = path.join(targetDir, req.file.originalname);
+        const target = createStorageTarget({ userId: req.userId, result: finalPdfResult, filename: req.file.originalname });
+        const { targetDir, targetPath } = target;
         if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
         await safeMoveFile(originalPath, targetPath);
+        const savedDoc = await persistDocumentForUser({
+          req,
+          result: finalPdfResult,
+          filePath: targetPath
+        });
+
+        cleanupFiles(tempImages);
+        for (const img of tempImages) {
+          try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
+        }
+
+        return res.json({ success: true, document: { ...savedDoc.toObject(), fileUrl: makeFileUrl(savedDoc.filePath) }, result: finalPdfResult });
       } catch (e) {
         console.error('Failed to move PDF original file to storage:', e.message || e);
       }
@@ -324,7 +597,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
       }
 
-      return res.json({ filename: req.file.originalname, result: finalPdfResult });
+      return res.status(500).json({ error: 'Failed to store processed PDF' });
     }
 
     console.log('Processing', processingPaths.length, 'page(s) sequentially (ML -> Vision LLM fallback)...');
@@ -346,7 +619,12 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
         if (confidence >= CONFIDENCE_THRESHOLD) {
           // Good ML result — accept and return
           console.log('ML HIGH CONFIDENCE -> RETURNING ML Result for', p);
-          finalResult = { document_type: predictedClass || 'Unknown', folder: cleanFolderName(predictedClass), confidence, method: 'ML' };
+          finalResult = {
+            document_type: predictedClass || 'Unknown',
+            folder: cleanFolderName(predictedClass),
+            confidence: normalizeConfidencePercent(confidence),
+            method: 'ML'
+          };
         } else {
           // ML low confidence — try Vision LLM for this page
           console.log('ML low confidence (', confidence, ') — invoking Vision LLM on', p);
@@ -357,6 +635,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
             const llmDocType = getDocTypeFromVisionResult(visionRes);
             if (!isUnknownDocType(llmDocType)) {
               finalResult = { document_type: llmDocType, folder: (visionRes.folder || cleanFolderName(llmDocType)), confidence: (visionRes.confidence || 0), method: 'Vision LLM' };
+              finalResult.confidence = normalizeConfidencePercent(finalResult.confidence);
             } else {
               console.log('Vision LLM returned unknown for', p, ' — continuing to next page');
             }
@@ -367,13 +646,24 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
 
         // If we have a finalResult from either ML or Vision LLM, persist the original and return
         if (finalResult) {
-          const folder = finalResult.folder || cleanFolderName(finalResult.document_type);
-          const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage', req.userId));
-          const targetDir = path.join(storageRoot, folder);
-          const targetPath = path.join(targetDir, req.file.originalname);
+          const target = createStorageTarget({ userId: req.userId, result: finalResult, filename: req.file.originalname });
+          const { targetDir, targetPath } = target;
           try {
             if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
             await safeMoveFile(originalPath, targetPath);
+            const savedDoc = await persistDocumentForUser({
+              req,
+              result: finalResult,
+              filePath: targetPath
+            });
+
+            // schedule cleanup of temporary images
+            cleanupFiles(tempImages);
+            for (const img of tempImages) {
+              try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
+            }
+
+            return res.json({ success: true, document: { ...savedDoc.toObject(), fileUrl: makeFileUrl(savedDoc.filePath) }, result: finalResult });
           } catch (e) {
             console.error('Failed to move original file to storage:', e.message || e);
             try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
@@ -385,7 +675,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
             try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
           }
 
-          return res.json({ filename: req.file.originalname, result: finalResult });
+          return res.status(500).json({ error: 'Failed to store processed file' });
         }
       } catch (e) {
         console.error('ML request failed for', p, e?.response?.data || e.message || e);
@@ -413,13 +703,34 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
 
     // No page produced a confident ML/LLM result. Final fallback: move original to Other/Unknown and return Unknown.
     try {
-      const folder = 'Other/Unknown';
-      const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage', req.userId));
-      const targetDir = path.join(storageRoot, folder);
-      const targetPath = path.join(targetDir, req.file.originalname);
+      const fallbackResult = {
+        document_type: 'Unknown',
+        category: 'Other',
+        confidence: 0,
+        method: 'Fallback'
+      };
+      const target = createStorageTarget({ userId: req.userId, result: fallbackResult, filename: req.file.originalname });
+      const { targetDir, targetPath } = target;
       if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
       try {
         await safeMoveFile(originalPath, targetPath);
+        const savedDoc = await persistDocumentForUser({
+          req,
+          result: fallbackResult,
+          filePath: targetPath
+        });
+
+        // cleanup temp images (immediate and schedule retries if any remain)
+        cleanupFiles(tempImages);
+        for (const img of tempImages) {
+          try {
+            if (fs.existsSync(img)) cleanup.enqueueDelete(img);
+          } catch (e) {
+            console.error('enqueueDelete failed for', img, e && e.message);
+          }
+        }
+
+        return res.json({ success: true, document: { ...savedDoc.toObject(), fileUrl: makeFileUrl(savedDoc.filePath) }, result: fallbackResult });
       } catch (e) {
         console.error('Failed to move original file to storage (final fallback):', e.message || e);
         try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
@@ -438,15 +749,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
       }
     }
 
-    return res.json({
-      filename: req.file.originalname,
-      result: {
-        document_type: 'Unknown',
-        folder: 'Other/Unknown',
-        confidence: 0,
-        method: 'Fallback'
-      }
-    });
+    return res.status(500).json({ error: 'Failed to persist fallback document' });
 
   } catch (err) {
     console.error(err?.response?.data || err.message || err);
@@ -460,6 +763,7 @@ app.listen(5000, () => {
   console.log('Backend running on port 5000');
   connectDB()
     .then(() => backfillClerkUsersToMongo())
+    .then(() => syncAllExistingStorageForUsers())
     .catch((err) => console.error('MongoDB/Clerk init error:', err && (err.message || err)));
   try { cleanup.start(); } catch (e) { console.error('cleanup start failed', e && e.message); }
 });
