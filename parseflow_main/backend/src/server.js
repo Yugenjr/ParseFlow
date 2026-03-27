@@ -21,7 +21,32 @@ const notificationRoutes = require('./routes/notifications');
 const { startWeeklySummaryJob } = require('./cron/weeklySummary');
 
 const app = express();
-app.use(cors());
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser clients (no origin) and known web/capacitor origins.
+    if (!origin) return callback(null, true);
+
+    const allowed = [
+      /^http:\/\/localhost(?::\d+)?$/,
+      /^capacitor:\/\/localhost$/,
+      /^ionic:\/\/localhost$/,
+      /^http:\/\/10\.0\.111\.131(?::\d+)?$/,
+    ];
+
+    if (allowed.some((rule) => rule.test(origin))) {
+      return callback(null, true);
+    }
+
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use('/files', express.static(path.resolve(path.join(__dirname, '..', '..', 'storage'))));
 const STORAGE_ROOT = path.resolve(path.join(__dirname, '..', '..', 'storage'));

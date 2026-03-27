@@ -1,4 +1,16 @@
-import { MoreVertical, Upload } from "lucide-react";
+import {
+  MoreVertical,
+  Upload,
+  UserRound,
+  Landmark,
+  Scale,
+  ClipboardCheck,
+  ReceiptText,
+  Building2,
+  FolderOpen,
+  FileText,
+  type LucideIcon,
+} from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { deleteUserDocument, fetchUserDocuments, uploadDocumentToFolder, type BackendDocument } from "@/lib/backend-api";
@@ -21,14 +33,14 @@ import {
 
 const CUSTOM_FOLDERS_KEY = "parseflow_custom_folders";
 
-const categoryConfig: Record<string, { emoji: string; color: string }> = {
-  Identity: { emoji: '🪪', color: 'border-l-primary' },
-  Financial: { emoji: '💰', color: 'border-l-success' },
-  Legal: { emoji: '⚖', color: 'border-l-accent' },
-  Compliance: { emoji: '📋', color: 'border-l-warning' },
-  Tax: { emoji: '💼', color: 'border-l-destructive' },
-  Business: { emoji: '🏢', color: 'border-l-muted-foreground' },
-  Other: { emoji: '🗂️', color: 'border-l-border' },
+const categoryConfig: Record<string, { icon: LucideIcon; color: string }> = {
+  Identity: { icon: UserRound, color: 'border-l-primary' },
+  Financial: { icon: Landmark, color: 'border-l-success' },
+  Legal: { icon: Scale, color: 'border-l-accent' },
+  Compliance: { icon: ClipboardCheck, color: 'border-l-warning' },
+  Tax: { icon: ReceiptText, color: 'border-l-destructive' },
+  Business: { icon: Building2, color: 'border-l-muted-foreground' },
+  Other: { icon: FolderOpen, color: 'border-l-border' },
 };
 
 export default function DocumentsPage() {
@@ -117,7 +129,7 @@ export default function DocumentsPage() {
 
   const openDoc = (doc: BackendDocument) => {
     if (!doc.fileUrl) return;
-    const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+    const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
     window.open(`${backendBaseUrl}${doc.fileUrl}`, '_blank');
   };
 
@@ -220,7 +232,7 @@ export default function DocumentsPage() {
               selectedCat === cat.name ? 'border-primary border-2' : ''
             }`}
           >
-            <span className="text-2xl">{cat.emoji}</span>
+            <cat.icon className="h-7 w-7 text-primary" strokeWidth={1.8} />
             <span className="font-heading text-lg text-foreground tracking-wider">{cat.name.toUpperCase()}</span>
             <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">
               {cat.count}
@@ -279,8 +291,8 @@ export default function DocumentsPage() {
                         onClick={() => openDoc(doc)}
                         className={`card-brutal card-brutal-hover flex items-center gap-4 border-l-4 ${categoryConfig[doc.category]?.color || ''} ${doc.fileUrl ? 'cursor-pointer' : ''}`}
                       >
-                        <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0 text-lg">
-                          📄
+                        <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0">
+                          <FileText className="h-5 w-5 text-primary" strokeWidth={1.8} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-body text-sm font-medium text-foreground truncate">{doc.filename}</p>

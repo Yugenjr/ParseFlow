@@ -12,10 +12,26 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function getReliableClerkToken(getToken: ReturnType<typeof useClerkAuth>["getToken"]): Promise<string | null> {
+  // Mobile WebView sessions can take longer to issue the first usable JWT after sign-in.
+  // Retry for a longer window so initial data fetches don't silently return empty.
+  for (let i = 0; i < 30; i += 1) {
+    let token = await getToken();
+    if (!token) {
+      token = await getToken({ skipCache: true });
+    }
+    if (token) return token;
+    await wait(400);
+  }
+  return null;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn, user: clerkUser } = useUser();
   const { getToken, signOut } = useClerkAuth();
-  const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+  const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
 
   const user = useMemo<User | null>(() => {
     if (!isSignedIn || !clerkUser) return null;
@@ -30,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const syncUser = useCallback(async () => {
     if (!isSignedIn) return;
-    const token = await getToken({ skipCache: true });
+    const token = await getReliableClerkToken(getToken);
     if (!token) return;
 
     const resp = await fetch(`${backendBaseUrl}/api/auth/sync-user`, {
@@ -47,8 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const getAuthToken = useCallback(async () => {
     if (!isSignedIn) return null;
-    const token = await getToken({ skipCache: true });
-    return token || null;
+    return getReliableClerkToken(getToken);
   }, [getToken, isSignedIn]);
 
   useEffect(() => {

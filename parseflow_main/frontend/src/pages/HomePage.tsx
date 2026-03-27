@@ -1,4 +1,4 @@
-import { FileText, BarChart3, HardDrive, Upload, Camera, Clock, FolderOpen, ChevronRight, Bot, Zap, Search } from "lucide-react";
+import { FileText, BarChart3, HardDrive, Upload, Clock, FolderOpen, ChevronRight, Bot, Zap, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
@@ -66,7 +66,6 @@ export default function HomePage() {
 
   const quickActions = [
     { icon: Upload, label: "UPLOAD", route: "/upload" },
-    { icon: Camera, label: "SCAN", route: "/upload" },
     { icon: Clock, label: "HISTORY", route: "/history" },
     { icon: FolderOpen, label: "ORGANIZE", route: "/documents" },
   ];
@@ -99,7 +98,7 @@ export default function HomePage() {
       {/* Quick Actions */}
       <div>
         <h3 className="font-heading text-2xl text-foreground mb-3 tracking-wider">QUICK ACTIONS</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {quickActions.map((a) => (
             <button
               key={a.label}

@@ -53,7 +53,7 @@ interface UploadResponse {
   result: Record<string, unknown>;
 }
 
-const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
 
 function buildAuthHeaders(token: string): Record<string, string> {
   return {

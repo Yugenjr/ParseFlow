@@ -77,7 +77,7 @@ export default function HistoryPage() {
 
   const openDoc = (doc: BackendDocument) => {
     if (!doc.fileUrl) return;
-    const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+    const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
     window.open(`${backendBaseUrl}${doc.fileUrl}`, '_blank');
   };
 

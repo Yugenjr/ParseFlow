@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { AuthenticateWithRedirectCallback } from "@clerk/react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -85,7 +86,11 @@ function VaultLoadingScreen() {
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <VaultLoadingScreen />;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    const to = search ? `/login${search}` : "/login";
+    return <Navigate to={to} replace />;
+  }
   return <DashboardLayout>{children}</DashboardLayout>;
 }
 
@@ -104,6 +109,7 @@ const App = () => (
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback signInForceRedirectUrl="/" />} />
             <Route path="/login" element={<AuthRoute><LoginPage /></AuthRoute>} />
             <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
             <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
