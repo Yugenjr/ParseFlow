@@ -25,7 +25,16 @@ function formatUploadedAt(ts: string): string {
   return when.toLocaleString();
 }
 
-const filters = ["All", "Identity", "Financial", "Legal", "Compliance", "Tax", "Business"];
+const filters = ["All", "Identity", "Financial", "Legal", "Compliance", "Tax", "Business", "Other"];
+
+function getCategory(item: BackendDocument): string {
+  return (
+    item.storage?.category ||
+    item.classification?.category ||
+    item.category ||
+    "Other"
+  );
+}
 
 const statusIcon: Record<string, React.ReactNode> = {
   success: <Check className="h-4 w-4 text-success" />,
@@ -71,9 +80,24 @@ export default function HistoryPage() {
     load().catch(() => setDocs([]));
   }, [user, getAuthToken]);
 
+  const searchTerm = search.trim().toLowerCase();
+
   const filtered = docs
-    .filter(d => filter === "All" || d.category === filter)
-    .filter(d => !search || d.filename.toLowerCase().includes(search.toLowerCase()));
+    .filter((d) => {
+      const category = getCategory(d);
+      return filter === "All" || category === filter;
+    })
+    .filter((d) => {
+      if (!searchTerm) return true;
+      const category = getCategory(d).toLowerCase();
+      const docType = String(d.document_type || d.storage?.docType || "").toLowerCase();
+      const filename = d.filename.toLowerCase();
+      return (
+        filename.includes(searchTerm) ||
+        category.includes(searchTerm) ||
+        docType.includes(searchTerm)
+      );
+    });
 
   const openDoc = (doc: BackendDocument) => {
     if (!doc.fileUrl) return;
@@ -153,7 +177,7 @@ export default function HistoryPage() {
               <div className="flex-1 min-w-0">
                 <p className="font-body text-sm font-medium text-foreground truncate">{item.filename}</p>
                 <p className="font-mono text-[10px] text-muted-foreground">
-                  {item.category} · Uploaded {formatUploadedAt(item.createdAt)}
+                  {getCategory(item)} · Uploaded {formatUploadedAt(item.createdAt)}
                 </p>
               </div>
               <div className="hidden sm:flex items-center gap-2 w-20">

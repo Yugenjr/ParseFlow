@@ -4,6 +4,19 @@ import { uploadDocument } from "@/lib/backend-api";
 import { useAuth } from "@/contexts/AuthContext";
 import axios from "axios";
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+
+const RECENT_UPLOAD_DOC_ID_KEY = "parseflow_recent_upload_doc_id";
+const RECENT_UPLOAD_SNAPSHOT_KEY = "parseflow_recent_upload_snapshot";
+
+interface RecentUploadSnapshot {
+  documentId: string;
+  filename: string;
+  documentType: string;
+  confidence: number;
+  category: string;
+  createdAt: string;
+}
 
 interface QueueItem {
   id: string;
@@ -17,10 +30,13 @@ interface QueueItem {
 
 export default function UploadPage() {
   const { getAuthToken, syncUser } = useAuth();
+  const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [lastResultJson, setLastResultJson] = useState<string>("");
+  const [recentlyProcessedName, setRecentlyProcessedName] = useState<string>("");
+  const [showFeedbackPrompt, setShowFeedbackPrompt] = useState(false);
   const progressTimersRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
@@ -147,6 +163,11 @@ export default function UploadPage() {
     }
 
     const queuedItems = queue.filter((q) => q.status === "queued" || q.status === "error");
+    let latestSuccessDocId = "";
+    let latestSuccessName = "";
+    let latestSnapshot: RecentUploadSnapshot | null = null;
+    let successCount = 0;
+
     for (const item of queuedItems) {
       const clearProgressTimer = () => {
         const timerId = progressTimersRef.current[item.id];
@@ -177,6 +198,22 @@ export default function UploadPage() {
         });
         clearProgressTimer();
         setLastResultJson(JSON.stringify(payload.result, null, 2));
+        latestSuccessDocId = payload.document?._id || latestSuccessDocId;
+        latestSuccessName = item.name;
+        latestSnapshot = {
+          documentId: payload.document?._id || "",
+          filename: payload.document?.filename || item.name,
+          documentType: String(payload.result?.document_type || payload.document?.document_type || "Document"),
+          confidence: Number(payload.document?.accuracy ?? payload.document?.confidence ?? 0),
+          category: String(
+            payload.document?.storage?.category ||
+              payload.document?.classification?.category ||
+              payload.document?.category ||
+              "Other",
+          ),
+          createdAt: payload.document?.createdAt || new Date().toISOString(),
+        };
+        successCount += 1;
         setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "done", progress: 100, message: String(payload.result?.document_type || "Processed") } : q));
       } catch (err) {
         clearProgressTimer();
@@ -187,6 +224,17 @@ export default function UploadPage() {
             : "Upload failed";
         setQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "error", progress: 100, message } : q));
       }
+    }
+
+    if (successCount > 0) {
+      if (latestSuccessDocId) {
+        localStorage.setItem(RECENT_UPLOAD_DOC_ID_KEY, latestSuccessDocId);
+      }
+      if (latestSnapshot) {
+        localStorage.setItem(RECENT_UPLOAD_SNAPSHOT_KEY, JSON.stringify(latestSnapshot));
+      }
+      setRecentlyProcessedName(latestSuccessName);
+      setShowFeedbackPrompt(true);
     }
   };
 
@@ -281,6 +329,31 @@ export default function UploadPage() {
           <pre className="bg-background border border-border rounded-sm p-3 font-mono text-xs overflow-x-auto">
             {lastResultJson}
           </pre>
+        </div>
+      )}
+
+      {showFeedbackPrompt && (
+        <div className="card-brutal border-l-4 border-l-primary space-y-3">
+          <p className="font-heading text-xl text-foreground tracking-wider">FEEDBACK REQUEST</p>
+          <p className="font-body text-sm text-muted-foreground">
+            {recentlyProcessedName
+              ? `Please review classification feedback for ${recentlyProcessedName}.`
+              : "Please review classification feedback for your recent upload."}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => navigate('/feedback')}
+              className="h-10 px-4 gradient-primary text-primary-foreground font-mono text-xs uppercase tracking-wider rounded-sm hover:opacity-90 transition-opacity duration-200"
+            >
+              GIVE FEEDBACK NOW
+            </button>
+            <button
+              onClick={() => setShowFeedbackPrompt(false)}
+              className="h-10 px-4 bg-secondary text-muted-foreground hover:text-foreground font-mono text-xs uppercase tracking-wider rounded-sm transition-colors duration-200"
+            >
+              LATER
+            </button>
+          </div>
         </div>
       )}
     </div>

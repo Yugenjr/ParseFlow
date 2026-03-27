@@ -265,7 +265,7 @@ export function ChatPanel() {
         <button
           onPointerDown={handleTogglePointerDown}
           style={{ left: `${buttonPos.x}px`, top: `${buttonPos.y}px` }}
-          className="fixed z-50 h-14 w-14 gradient-primary rounded-sm flex items-center justify-center text-primary-foreground font-heading text-2xl shadow-card hover:opacity-90 transition-opacity duration-200 touch-none"
+          className="fixed z-50 h-14 w-14 gradient-primary rounded-full flex items-center justify-center text-primary-foreground font-heading text-2xl shadow-card hover:opacity-90 transition-opacity duration-200 touch-none"
           aria-label="Open GuideBot"
         >
           <Bot className="h-7 w-7" />

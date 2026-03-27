@@ -1,94 +1,170 @@
-import { useState } from "react";
-import { Check, Edit, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
 
-const categories = ["Identity", "Financial", "Legal", "Compliance", "Tax", "Business"];
+const FEEDBACK_LOG_KEY = "parseflow_feedback_log";
+const HANDLED_TOP_DOC_ID_KEY = "parseflow_feedback_handled_top_doc_id";
+
+type FeedbackChoice = "correct" | "wrong";
+
+interface StoredFeedback {
+  documentId: string;
+  feedback: FeedbackChoice;
+  originalCategory: string;
+  correctedCategory: string;
+  notes: string;
+  createdAt: string;
+}
+
+interface FeedbackTarget {
+  id: string;
+  filename: string;
+  documentType: string;
+  confidence: number;
+  category: string;
+}
+
+function getDocCategory(doc: BackendDocument): string {
+  return doc.storage?.category || doc.classification?.category || doc.category || "Other";
+}
+
+function getDocType(doc: BackendDocument): string {
+  return doc.classification?.document_type || doc.document_type || "Document";
+}
+
+function getDocConfidence(doc: BackendDocument): number {
+  const raw = Number(doc.classification?.accuracy ?? doc.classification?.confidence ?? doc.accuracy ?? doc.confidence ?? 0);
+  if (Number.isNaN(raw)) return 0;
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
 
 export default function FeedbackPage() {
-  const [feedback, setFeedback] = useState<'correct' | 'edit' | 'wrong' | null>(null);
-  const [selectedCategory, setSelectedCategory] = useState("Financial");
-  const [notes, setNotes] = useState("");
+  const { user, getAuthToken } = useAuth();
   const { toast } = useToast();
+  const [docs, setDocs] = useState<BackendDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [handledTopDocId, setHandledTopDocId] = useState<string>(() => localStorage.getItem(HANDLED_TOP_DOC_ID_KEY) || "");
 
-  const handleSubmit = () => {
+  useEffect(() => {
+    const loadDocs = async () => {
+      if (!user) return;
+      setIsLoading(true);
+      try {
+        const token = await getAuthToken();
+        if (!token) {
+          setDocs([]);
+          return;
+        }
+        const backendDocs = await fetchUserDocuments(token);
+        const sorted = backendDocs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setDocs(sorted);
+      } catch {
+        setDocs([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadDocs();
+  }, [user, getAuthToken]);
+
+  const target = useMemo<FeedbackTarget | null>(() => {
+    if (!docs.length) return null;
+
+    const latestDoc = docs.reduce((latest, current) => {
+      const latestTs = new Date(latest.createdAt).getTime();
+      const currentTs = new Date(current.createdAt).getTime();
+      return currentTs > latestTs ? current : latest;
+    }, docs[0]);
+
+    const latestTarget: FeedbackTarget = {
+      id: latestDoc._id,
+      filename: latestDoc.filename,
+      documentType: getDocType(latestDoc),
+      confidence: getDocConfidence(latestDoc),
+      category: getDocCategory(latestDoc),
+    };
+
+    if (handledTopDocId && handledTopDocId === latestTarget.id) {
+      return null;
+    }
+
+    return latestTarget;
+  }, [docs, handledTopDocId]);
+
+  const handleSubmit = (choice: FeedbackChoice) => {
+    if (!target) return;
+
+    const payload: StoredFeedback = {
+      documentId: target.id,
+      feedback: choice,
+      originalCategory: target.category,
+      correctedCategory: target.category,
+      notes: choice === "wrong" ? "Marked as wrong" : "Marked as correct",
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      const current = localStorage.getItem(FEEDBACK_LOG_KEY);
+      const parsed = current ? (JSON.parse(current) as StoredFeedback[]) : [];
+      const next = [payload, ...parsed].slice(0, 100);
+      localStorage.setItem(FEEDBACK_LOG_KEY, JSON.stringify(next));
+      localStorage.setItem(HANDLED_TOP_DOC_ID_KEY, target.id);
+      setHandledTopDocId(target.id);
+    } catch {
+      // Ignore storage errors and keep UX responsive.
+    }
+
     toast({ title: "FEEDBACK SUBMITTED", description: "Thank you for improving our AI model." });
-    setFeedback(null);
-    setNotes("");
   };
 
   return (
     <div className="space-y-6 max-w-2xl">
       <h2 className="font-heading text-3xl text-foreground tracking-wider">FEEDBACK</h2>
 
-      {/* Document context */}
-      <div className="card-brutal border-l-4 border-l-primary">
-        <p className="font-mono text-xs text-muted-foreground uppercase mb-1">LAST CLASSIFICATION</p>
-        <p className="font-heading text-2xl text-foreground tracking-wider">INVOICE — 97% CONFIDENCE</p>
-        <p className="font-mono text-xs text-muted-foreground">Invoice_March_2026.pdf</p>
-      </div>
-
-      {/* Feedback buttons */}
-      <div>
-        <p className="font-heading text-xl text-foreground tracking-wider mb-3">WAS THIS CORRECT?</p>
-        <div className="grid grid-cols-3 gap-3">
-          <button
-            onClick={() => { setFeedback('correct'); handleSubmit(); }}
-            className={`card-brutal card-brutal-hover flex flex-col items-center gap-2 py-4 ${feedback === 'correct' ? 'border-success border-2' : ''}`}
-          >
-            <Check className="h-6 w-6 text-success" />
-            <span className="font-heading text-lg text-success tracking-wider">CORRECT</span>
-          </button>
-          <button
-            onClick={() => setFeedback('edit')}
-            className={`card-brutal card-brutal-hover flex flex-col items-center gap-2 py-4 ${feedback === 'edit' ? 'border-warning border-2' : ''}`}
-          >
-            <Edit className="h-6 w-6 text-warning" />
-            <span className="font-heading text-lg text-warning tracking-wider">EDIT</span>
-          </button>
-          <button
-            onClick={() => setFeedback('wrong')}
-            className={`card-brutal card-brutal-hover flex flex-col items-center gap-2 py-4 ${feedback === 'wrong' ? 'border-destructive border-2' : ''}`}
-          >
-            <X className="h-6 w-6 text-destructive" />
-            <span className="font-heading text-lg text-destructive tracking-wider">WRONG</span>
-          </button>
+      {isLoading ? (
+        <div className="card-brutal border-l-4 border-l-primary">
+          <p className="font-mono text-xs text-muted-foreground uppercase">Loading latest upload...</p>
         </div>
-      </div>
-
-      {/* Edit/Wrong form */}
-      {(feedback === 'edit' || feedback === 'wrong') && (
-        <div className="card-brutal space-y-4">
-          <p className="font-heading text-xl text-foreground tracking-wider">CORRECT CATEGORY</p>
-          <div className="grid grid-cols-3 gap-2">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`py-2 px-3 rounded-sm font-mono text-xs uppercase tracking-wider transition-all duration-200 ${
-                  selectedCategory === cat ? 'gradient-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+      ) : target ? (
+        <>
+          <div className="card-brutal border-l-4 border-l-primary">
+            <p className="font-mono text-xs text-muted-foreground uppercase mb-1">LAST CLASSIFIED</p>
+            <p className="font-heading text-2xl text-foreground tracking-wider">
+              {target.documentType.toUpperCase()} - {target.confidence}% CONFIDENCE
+            </p>
+            <p className="font-mono text-xs text-muted-foreground">{target.filename}</p>
+            <p className="font-mono text-xs text-muted-foreground mt-1">Detected category: {target.category}</p>
           </div>
 
           <div>
-            <label className="font-mono text-xs text-muted-foreground uppercase tracking-wider block mb-1">NOTES</label>
-            <textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              className="w-full h-24 p-3 bg-background border border-border rounded-sm font-body text-sm text-foreground focus:outline-none focus:border-primary resize-none transition-colors duration-200"
-              placeholder="Additional feedback..."
-            />
+            <p className="font-heading text-xl text-foreground tracking-wider mb-3">WAS THIS CORRECT?</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => handleSubmit("correct")}
+                className="card-brutal card-brutal-hover flex flex-col items-center gap-2 py-4"
+              >
+                <Check className="h-6 w-6 text-success" />
+                <span className="font-heading text-lg text-success tracking-wider">CORRECT</span>
+              </button>
+              <button
+                onClick={() => handleSubmit("wrong")}
+                className="card-brutal card-brutal-hover flex flex-col items-center gap-2 py-4"
+              >
+                <X className="h-6 w-6 text-destructive" />
+                <span className="font-heading text-lg text-destructive tracking-wider">WRONG</span>
+              </button>
+            </div>
           </div>
-
-          <button
-            onClick={handleSubmit}
-            className="w-full h-12 gradient-primary text-primary-foreground font-heading text-xl tracking-wider rounded-sm hover:opacity-90 active:scale-[0.97] transition-all duration-200"
-          >
-            SUBMIT FEEDBACK
-          </button>
+        </>
+      ) : (
+        <div className="card-brutal border-l-4 border-l-primary">
+          <p className="font-mono text-xs text-muted-foreground uppercase mb-1">NO PENDING FEEDBACK</p>
+          <p className="font-body text-sm text-muted-foreground">
+            Feedback for the current top history document is already submitted. A new top document will appear here automatically.
+          </p>
         </div>
       )}
     </div>
