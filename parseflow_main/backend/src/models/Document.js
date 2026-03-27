@@ -19,8 +19,14 @@ const documentSchema = new mongoose.Schema({
   storage: {
     category: { type: String, default: 'Other' },
     docType: { type: String, default: 'Unknown' },
+    localPath: { type: String, default: '' },
     filePath: { type: String, default: '' },
-    fileUrl: { type: String, default: '' }
+    fileUrl: { type: String, default: '' },
+    googleDrive: {
+      fileId: { type: String, default: null },
+      fileUrl: { type: String, default: null }
+    },
+    googleDriveUrl: { type: String, default: null }
   },
   classification: {
     document_type: { type: String, default: 'Unknown' },

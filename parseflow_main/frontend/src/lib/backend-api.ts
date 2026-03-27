@@ -51,6 +51,14 @@ interface UploadResponse {
   success: boolean;
   document: BackendDocument;
   result: Record<string, unknown>;
+  storage?: {
+    localPath?: string;
+    googleDriveUrl?: string | null;
+  };
+}
+
+export interface GoogleDriveStatus {
+  connected: boolean;
 }
 
 const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
@@ -166,4 +174,23 @@ export async function fetchDashboardStats(token: string): Promise<BackendStats> 
     avgProcessingTimeSec: Number(data.avgProcessingTimeSec || 0),
     queryCount: Number(data.queryCount || 0)
   };
+}
+
+export async function fetchGoogleDriveStatus(token: string): Promise<GoogleDriveStatus> {
+  const resp = await axios.get(`${backendBaseUrl}/api/google-drive/status`, {
+    headers: buildAuthHeaders(token)
+  });
+  const data = resp.data as { connected?: boolean };
+  return { connected: Boolean(data.connected) };
+}
+
+export async function fetchGoogleDriveAuthUrl(token: string): Promise<string> {
+  const resp = await axios.get(`${backendBaseUrl}/api/google-drive/auth-url`, {
+    headers: buildAuthHeaders(token)
+  });
+  const data = resp.data as { url?: string };
+  if (!data.url) {
+    throw new Error('Failed to get Google OAuth URL');
+  }
+  return data.url;
 }

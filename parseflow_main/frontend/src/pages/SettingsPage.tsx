@@ -1,12 +1,17 @@
-import { Moon, Sun, Bell, Shield, User, ChevronRight, LogOut } from "lucide-react";
-import { useState } from "react";
+import { Moon, Sun, Bell, Shield, User, ChevronRight, LogOut, Link2, CheckCircle2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { fetchGoogleDriveAuthUrl, fetchGoogleDriveStatus } from "@/lib/backend-api";
+import { useToast } from "@/hooks/use-toast";
 
 export default function SettingsPage() {
   const [isDark, setIsDark] = useState(document.documentElement.classList.contains("dark"));
-  const { user, logout } = useAuth();
+  const [driveConnected, setDriveConnected] = useState(false);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const { user, logout, getAuthToken } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   const toggleDark = () => {
     setIsDark(!isDark);
@@ -16,6 +21,40 @@ export default function SettingsPage() {
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  useEffect(() => {
+    const loadDriveStatus = async () => {
+      const token = await getAuthToken();
+      if (!token) return;
+      try {
+        const status = await fetchGoogleDriveStatus(token);
+        setDriveConnected(status.connected);
+      } catch {
+        setDriveConnected(false);
+      }
+    };
+    loadDriveStatus();
+  }, [getAuthToken]);
+
+  const handleConnectGoogleDrive = async () => {
+    setDriveLoading(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        toast({ title: 'AUTH REQUIRED', description: 'Please login again.' });
+        return;
+      }
+      const oauthUrl = await fetchGoogleDriveAuthUrl(token);
+      window.location.href = oauthUrl;
+    } catch (err) {
+      toast({
+        title: 'GOOGLE DRIVE CONNECT FAILED',
+        description: err instanceof Error ? err.message : 'Unable to start Google OAuth.',
+      });
+    } finally {
+      setDriveLoading(false);
+    }
   };
 
   const settingsItems = [
@@ -75,6 +114,33 @@ export default function SettingsPage() {
               <ChevronRight className="h-4 w-4 text-muted-foreground" />
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Cloud Sync */}
+      <div className="card-brutal">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {driveConnected ? (
+              <CheckCircle2 className="h-5 w-5 text-success" />
+            ) : (
+              <Link2 className="h-5 w-5 text-primary" />
+            )}
+            <div>
+              <p className="font-body text-sm font-medium text-foreground">Google Drive Sync</p>
+              <p className="font-mono text-[10px] text-muted-foreground">
+                {driveConnected ? 'CONNECTED · NEW UPLOADS AUTO-SYNC' : 'OPTIONAL · CONNECT ONCE FOR AUTO-SYNC'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleConnectGoogleDrive}
+            disabled={driveLoading || driveConnected}
+            className="h-9 px-4 border border-primary text-primary font-mono text-xs rounded-sm hover:bg-secondary transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {driveConnected ? 'CONNECTED' : driveLoading ? 'CONNECTING...' : 'CONNECT GOOGLE DRIVE'}
+          </button>
         </div>
       </div>
 

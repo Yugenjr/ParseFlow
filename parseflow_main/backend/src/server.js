@@ -5,6 +5,7 @@ const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { createClerkClient } = require('@clerk/backend');
 const { connectDB } = require('./config/db');
 const User = require('./models/User');
@@ -17,6 +18,7 @@ const { askGuideBot } = require('./services/guidebotService');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
 const { createNotification } = require('./services/notificationService');
 const { sendEmail } = require('./services/emailService');
+const { createGoogleAuthUrl, getOAuthClient, uploadToDrive } = require('./services/driveService');
 const notificationRoutes = require('./routes/notifications');
 const { startWeeklySummaryJob } = require('./cron/weeklySummary');
 
@@ -126,6 +128,8 @@ const ALLOWED_CATEGORIES = new Set(['Identity', 'Financial', 'Legal', 'Tax', 'Bu
 const DOCBOT_GROQ_API_URL = process.env.DOCBOT_GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const DOCBOT_GROQ_MODEL = process.env.DOCBOT_GROQ_MODEL || 'llama-3.1-8b-instant';
 const DOCBOT_GROQ_API_KEY = process.env.DOCBOT_GROQ_API_KEY || process.env.GUIDEBOT_GROQ_API_KEY || process.env.GROQ_API_KEY;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://10.0.111.131:5173';
+const GOOGLE_OAUTH_STATE_SECRET = process.env.GOOGLE_OAUTH_STATE_SECRET || process.env.CLERK_SECRET_KEY || 'parseflow-google-state-dev-secret';
 
 function normalizeConfidencePercent(value) {
   if (value === null || value === undefined) return 0;
@@ -250,6 +254,93 @@ async function upsertUserFromAuth(req) {
   }
 
   return user;
+}
+
+function signGoogleOauthState(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', GOOGLE_OAUTH_STATE_SECRET)
+    .update(body)
+    .digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifyGoogleOauthState(stateToken) {
+  if (!stateToken || typeof stateToken !== 'string' || !stateToken.includes('.')) {
+    throw new Error('Invalid OAuth state');
+  }
+
+  const [body, sig] = stateToken.split('.');
+  if (!body || !sig) {
+    throw new Error('Invalid OAuth state token format');
+  }
+
+  const expected = crypto
+    .createHmac('sha256', GOOGLE_OAUTH_STATE_SECRET)
+    .update(body)
+    .digest('base64url');
+
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    throw new Error('OAuth state signature mismatch');
+  }
+
+  const decoded = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  if (!decoded || !decoded.userId || !decoded.exp || Date.now() > Number(decoded.exp)) {
+    throw new Error('OAuth state is expired or malformed');
+  }
+
+  return decoded;
+}
+
+async function maybeSyncDocumentToGoogleDrive({ req, savedDoc, category, docType }) {
+  try {
+    const userDoc = await User.findOne({ clerkId: req.userId });
+    if (!userDoc || !userDoc.googleDrive || !userDoc.googleDrive.connected) {
+      return null;
+    }
+
+    const synced = await uploadToDrive({
+      filePath: savedDoc.filePath,
+      fileName: savedDoc.filename,
+      userId: req.userId,
+      category,
+      docType,
+      userDoc,
+    });
+
+    savedDoc.storage = savedDoc.storage || {};
+    savedDoc.storage.googleDrive = {
+      fileId: synced.fileId,
+      fileUrl: synced.fileUrl,
+    };
+    savedDoc.storage.googleDriveUrl = synced.fileUrl || null;
+    await savedDoc.save();
+
+    return synced;
+  } catch (err) {
+    console.error('Google Drive sync failed (non-blocking):', err && (err.message || err));
+    return null;
+  }
+}
+
+function buildUploadSuccessResponse({ savedDoc, result }) {
+  const docObj = savedDoc.toObject();
+  const localPath = savedDoc.filePath;
+  const googleDriveUrl =
+    (savedDoc.storage && (savedDoc.storage.googleDriveUrl || (savedDoc.storage.googleDrive && savedDoc.storage.googleDrive.fileUrl))) ||
+    null;
+
+  return {
+    success: true,
+    document: { ...docObj, fileUrl: makeFileUrl(savedDoc.filePath) },
+    result,
+    storage: {
+      localPath,
+      googleDriveUrl,
+    },
+  };
 }
 
 function deriveCategory(result) {
@@ -511,6 +602,7 @@ async function persistDocumentForUser({ req, result, filePath }) {
     storage: {
       category,
       docType,
+      localPath: filePath,
       filePath,
       fileUrl
     },
@@ -593,17 +685,25 @@ async function resolveUserEmail(userId, tokenEmail) {
 
 async function persistAndNotify({ req, result, filePath }) {
   const savedDoc = await persistDocumentForUser({ req, result, filePath });
+  const category = deriveCategory(result);
+  const storageDocType = (savedDoc.storage && savedDoc.storage.docType) || deriveDocType(result).replace(/\s+/g, '_');
+
+  await maybeSyncDocumentToGoogleDrive({
+    req,
+    savedDoc,
+    category,
+    docType: storageDocType,
+  });
 
   try {
     const docType = deriveDocType(result);
-    const category = deriveCategory(result);
-    const storageDocType = (savedDoc.storage && savedDoc.storage.docType) || docType.replace(/\s+/g, '_');
+    const notificationDocType = (savedDoc.storage && savedDoc.storage.docType) || docType.replace(/\s+/g, '_');
 
     await createNotification(req.userId, `Upload successful: ${savedDoc.filename}`, 'ORGANIZATION');
     await createNotification(req.userId, `We detected a ${docType}`, 'INSIGHT');
     await createNotification(
       req.userId,
-      `Your document has been categorized under ${category}/${storageDocType}`,
+      `Your document has been categorized under ${category}/${notificationDocType}`,
       'ORGANIZATION'
     );
 
@@ -632,6 +732,74 @@ app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'User sync failed' });
+  }
+});
+
+app.get('/api/google-drive/status', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findOne({ clerkId: req.userId }).lean();
+    const connected = Boolean(user && user.googleDrive && user.googleDrive.connected);
+    return res.json({ connected });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch Google Drive status' });
+  }
+});
+
+app.get('/api/google-drive/auth-url', authMiddleware, async (req, res) => {
+  try {
+    await upsertUserFromAuth(req);
+    const state = signGoogleOauthState({
+      userId: req.userId,
+      exp: Date.now() + 10 * 60 * 1000,
+    });
+    const url = `${process.env.APP_BASE_URL || 'http://10.0.111.131:5000'}/auth/google?state=${encodeURIComponent(state)}`;
+    return res.json({ url });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to initialize Google OAuth' });
+  }
+});
+
+app.get('/auth/google', async (req, res) => {
+  try {
+    const state = String((req.query && req.query.state) || '');
+    verifyGoogleOauthState(state);
+    const url = createGoogleAuthUrl(state);
+    return res.redirect(url);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to start Google OAuth' });
+  }
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const code = req.query && req.query.code;
+    const state = req.query && req.query.state;
+    if (!code || !state) {
+      return res.status(400).send('Missing Google OAuth callback parameters');
+    }
+
+    const statePayload = verifyGoogleOauthState(String(state));
+    const oauth2Client = getOAuthClient();
+    const tokenResp = await oauth2Client.getToken(String(code));
+    const tokens = (tokenResp && tokenResp.tokens) || {};
+
+    const user = await User.findOne({ clerkId: statePayload.userId });
+    if (!user) {
+      return res.status(404).send('User not found for Google Drive connection');
+    }
+
+    user.googleDrive = {
+      connected: true,
+      access_token: tokens.access_token || (user.googleDrive && user.googleDrive.access_token) || null,
+      refresh_token: tokens.refresh_token || (user.googleDrive && user.googleDrive.refresh_token) || null,
+      token_expiry_date: tokens.expiry_date || null,
+    };
+    await user.save();
+
+    return res.redirect(`${FRONTEND_URL}/settings?drive=connected`);
+  } catch (err) {
+    console.error('Google OAuth callback failed:', err && (err.message || err));
+    return res.redirect(`${FRONTEND_URL}/settings?drive=error`);
   }
 });
 
@@ -1010,6 +1178,7 @@ app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (re
       storage: {
         category,
         docType: docTypePath,
+        localPath: targetPath,
         filePath: targetPath,
         fileUrl
       },
@@ -1029,11 +1198,14 @@ app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (re
       console.error('Manual upload notification flow failed:', notifyErr && (notifyErr.message || notifyErr));
     }
 
-    return res.json({
-      success: true,
-      document: { ...savedDoc.toObject(), fileUrl },
-      result: manualResult
+    await maybeSyncDocumentToGoogleDrive({
+      req,
+      savedDoc,
+      category,
+      docType: docTypePath || documentType,
     });
+
+    return res.json(buildUploadSuccessResponse({ savedDoc, result: manualResult }));
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Manual folder upload failed' });
   }
@@ -1171,7 +1343,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
           try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
         }
 
-        return res.json({ success: true, document: { ...savedDoc.toObject(), fileUrl: makeFileUrl(savedDoc.filePath) }, result: finalPdfResult });
+        return res.json(buildUploadSuccessResponse({ savedDoc, result: finalPdfResult }));
       } catch (e) {
         console.error('Failed to move PDF original file to storage:', e.message || e);
       }
@@ -1270,7 +1442,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
               try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
             }
 
-            return res.json({ success: true, document: { ...savedDoc.toObject(), fileUrl: makeFileUrl(savedDoc.filePath) }, result: finalResult });
+            return res.json(buildUploadSuccessResponse({ savedDoc, result: finalResult }));
           } catch (e) {
             console.error('Failed to move original file to storage:', e.message || e);
             try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
@@ -1341,7 +1513,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
           }
         }
 
-        return res.json({ success: true, document: { ...savedDoc.toObject(), fileUrl: makeFileUrl(savedDoc.filePath) }, result: fallbackResult });
+        return res.json(buildUploadSuccessResponse({ savedDoc, result: fallbackResult }));
       } catch (e) {
         console.error('Failed to move original file to storage (final fallback):', e.message || e);
         try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
