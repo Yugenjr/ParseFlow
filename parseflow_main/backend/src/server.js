@@ -131,6 +131,8 @@ const DOCBOT_GROQ_API_KEY = process.env.DOCBOT_GROQ_API_KEY || process.env.GUIDE
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://10.0.111.131:5173';
 const GOOGLE_OAUTH_STATE_SECRET = process.env.GOOGLE_OAUTH_STATE_SECRET || process.env.CLERK_SECRET_KEY || 'parseflow-google-state-dev-secret';
 
+console.log('USING CLIENT:', process.env.GOOGLE_CLIENT_ID);
+
 function normalizeConfidencePercent(value) {
   if (value === null || value === undefined) return 0;
 
