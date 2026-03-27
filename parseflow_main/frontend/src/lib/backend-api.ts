@@ -11,6 +11,11 @@ export interface BackendDocument {
   confidence: number;
   method: string;
   metadata: Record<string, unknown>;
+  extracted_text?: string;
+  llm_analysis?: {
+    summary?: string;
+    key_fields?: Record<string, unknown>;
+  };
   storage?: {
     category?: string;
     docType?: string;
@@ -62,4 +67,31 @@ export async function fetchUserDocuments(token: string): Promise<BackendDocument
     headers: buildAuthHeaders(token)
   });
   return Array.isArray(resp.data) ? (resp.data as BackendDocument[]) : [];
+}
+
+export async function queryDocBot(question: string, token: string): Promise<{ answer: string; documents_used: number }> {
+  let resp;
+  try {
+    resp = await axios.post(
+      `${backendBaseUrl}/api/docbot/query`,
+      { question },
+      { headers: buildAuthHeaders(token) }
+    );
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      resp = await axios.post(
+        `${backendBaseUrl}/docbot/query`,
+        { question },
+        { headers: buildAuthHeaders(token) }
+      );
+    } else {
+      throw err;
+    }
+  }
+
+  const data = resp.data as { answer?: string; documents_used?: number };
+  return {
+    answer: String(data.answer || "I couldn't find this in your documents."),
+    documents_used: Number(data.documents_used || 0)
+  };
 }

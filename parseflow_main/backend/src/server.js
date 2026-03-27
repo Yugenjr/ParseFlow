@@ -428,11 +428,38 @@ app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
 
 function getDocbotFilteredDocs(question, docs) {
   const q = String(question || '').toLowerCase();
+  const docText = (doc) => {
+    const parts = [
+      String(doc.filename || ''),
+      String(doc.document_type || ''),
+      String(doc.category || ''),
+      JSON.stringify(doc.metadata || {}),
+      JSON.stringify(doc.llm_analysis || {}),
+      String(doc.extracted_text || '')
+    ];
+    return parts.join(' ').toLowerCase();
+  };
+
   if (q.includes('aadhaar') || q.includes('aadhar')) {
-    return docs.filter((doc) => String(doc.document_type || '').toLowerCase().includes('aadhaar') || String(doc.document_type || '').toLowerCase().includes('aadhar'));
+    return docs.filter((doc) => {
+      const hay = docText(doc);
+      return hay.includes('aadhaar') || hay.includes('aadhar') || hay.includes('uid');
+    });
   }
   if (q.includes('pan')) {
-    return docs.filter((doc) => String(doc.document_type || '').toLowerCase().includes('pan'));
+    return docs.filter((doc) => {
+      const hay = docText(doc);
+      return hay.includes(' pan ') || hay.includes('pan card') || hay.includes('permanent account number');
+    });
+  }
+  if (q.includes('passport')) {
+    return docs.filter((doc) => docText(doc).includes('passport'));
+  }
+  if (q.includes('invoice') || q.includes('bill') || q.includes('receipt')) {
+    return docs.filter((doc) => {
+      const hay = docText(doc);
+      return hay.includes('invoice') || hay.includes('bill') || hay.includes('receipt');
+    });
   }
   return docs;
 }
@@ -442,18 +469,58 @@ function buildDocbotContext(docs) {
   const context = limitedDocs.map((doc) => {
     const extracted = String(doc.extracted_text || '').slice(0, 2000);
     const structured = JSON.stringify(doc.llm_analysis || {}).slice(0, 1000);
-    return `Document: ${doc.document_type}\nCategory: ${doc.category}\n\nExtracted Text:\n${extracted}\n\nStructured Data:\n${structured}`;
+    const metadata = JSON.stringify(doc.metadata || {}).slice(0, 1000);
+    const classification = JSON.stringify(doc.classification || {}).slice(0, 500);
+    return `Filename: ${doc.filename || 'Unknown'}\nDocument: ${doc.document_type}\nCategory: ${doc.category}\n\nExtracted Text:\n${extracted}\n\nStructured Data:\n${structured}\n\nMetadata:\n${metadata}\n\nClassification:\n${classification}`;
   }).join('\n\n');
 
   return context.slice(0, 12000);
 }
 
-async function askDocBot({ question, context }) {
+function isDocumentDataQuery(question) {
+  const q = String(question || '').toLowerCase();
+  const docDataSignals = [
+    'my pan', 'pan number', 'aadhaar', 'aadhar', 'uid', 'passport', 'license', 'licence',
+    'document number', 'id number', 'invoice', 'receipt', 'amount', 'total', 'balance',
+    'dob', 'date of birth', 'expiry', 'expir', 'what is in my', 'from my documents',
+    'extract', 'metadata', 'field', 'number in', 'show my'
+  ];
+  return docDataSignals.some((k) => q.includes(k));
+}
+
+async function askDocBot({ question, context, mode }) {
   if (!DOCBOT_GROQ_API_KEY) {
     throw new Error('DOCBOT_GROQ_API_KEY is not configured');
   }
 
-  const prompt = `You are DocBot.\n\nYou MUST answer ONLY using the provided documents.\n\nIf answer not found, say:\n"I couldn't find this in your documents."\n\nContext:\n${context}\n\nQuestion:\n${question}`;
+  const prompt = mode === 'documents'
+    ? `You are DocBot.
+
+You MUST answer ONLY using the provided documents.
+Use values from Structured Data and Metadata first, then Extracted Text.
+When possible, mention which filename the value came from.
+
+If answer not found, say exactly:
+"I couldn't find this in your documents."
+
+Context:
+${context}
+
+Question:
+${question}`
+    : `You are DocBot, an interactive assistant inside ParseFlow.
+
+Behavior:
+- Be conversational, helpful, and guide users through ParseFlow features (upload, documents, history, export, settings).
+- You can answer general product/navigation questions directly.
+- If the question is ambiguous, ask one short clarifying follow-up.
+- Keep answers concise and practical.
+
+Optional Document Context (use only if relevant):
+${context}
+
+User Question:
+${question}`;
 
   const response = await axios.post(
     DOCBOT_GROQ_API_URL,
@@ -490,38 +557,49 @@ app.post('/api/guidebot/chat', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/docbot/query', authMiddleware, async (req, res) => {
+async function handleDocbotQuery(req, res) {
   try {
     const question = String((req.body && req.body.question) || '').trim();
     if (!question) {
       return res.status(400).json({ error: 'question is required' });
     }
 
+    const docMode = isDocumentDataQuery(question);
+
     const allDocs = await Document.find({ userId: req.userId })
       .sort({ createdAt: -1 })
       .limit(60)
       .lean();
 
-    const filteredDocs = getDocbotFilteredDocs(question, allDocs);
+    const filteredDocs = docMode ? getDocbotFilteredDocs(question, allDocs) : allDocs;
     const docsForContext = filteredDocs.length > 0 ? filteredDocs : allDocs;
     const context = buildDocbotContext(docsForContext);
 
-    if (!context.trim()) {
+    if (docMode && !context.trim()) {
       return res.json({
         answer: "I couldn't find this in your documents.",
         documents_used: 0
       });
     }
 
-    const answer = await askDocBot({ question, context });
+    const answer = await askDocBot({
+      question,
+      context,
+      mode: docMode ? 'documents' : 'interactive'
+    });
+
+    const documentsUsed = docMode ? Math.min(docsForContext.length, 12) : 0;
     return res.json({
       answer: answer || "I couldn't find this in your documents.",
-      documents_used: Math.min(docsForContext.length, 12)
+      documents_used: documentsUsed
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'DocBot query failed' });
   }
-});
+}
+
+app.post('/api/docbot/query', authMiddleware, handleDocbotQuery);
+app.post('/docbot/query', authMiddleware, handleDocbotQuery);
 
 app.get('/api/documents', authMiddleware, async (req, res) => {
   try {
