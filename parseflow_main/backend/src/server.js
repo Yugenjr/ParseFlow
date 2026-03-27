@@ -96,7 +96,7 @@ const STORAGE_ALERTS = [
   { threshold: 100, message: 'Storage limit reached. Uploads are blocked' }
 ];
 
-const CONFIDENCE_THRESHOLD_PERCENT = 90;
+const CONFIDENCE_THRESHOLD_PERCENT = 97;
 const ALLOWED_CATEGORIES = new Set(['Identity', 'Financial', 'Legal', 'Tax', 'Business', 'Other']);
 const DOCBOT_GROQ_API_URL = process.env.DOCBOT_GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const DOCBOT_GROQ_MODEL = process.env.DOCBOT_GROQ_MODEL || 'llama-3.1-8b-instant';
