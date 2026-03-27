@@ -5,11 +5,16 @@ const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { createClerkClient } = require('@clerk/backend');
+const { connectDB } = require('./config/db');
+const User = require('./models/User');
+const { authMiddleware } = require('./middleware/authMiddleware');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 // Store uploads in backend/uploads (one level above src)
 const UPLOADS_DIR = path.resolve(path.join(__dirname, '..', 'uploads'));
@@ -21,6 +26,9 @@ const createCleanup = require('./services/cleanupService');
 const cleanup = createCleanup({ uploadsDir: UPLOADS_DIR, intervalMs: 60000 });
 
 const upload = multer({ dest: UPLOADS_DIR });
+const clerkClient = process.env.CLERK_SECRET_KEY
+  ? createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
+  : null;
 
 // Robust file mover: try rename, retry on transient errors, fallback to copy+unlink
 async function safeMoveFile(src, dest) {
@@ -97,10 +105,115 @@ function cleanFolderName(docType) {
   return (isIdentityClass(docType) ? 'Identity/' : 'Other/') + parts.join('_');
 }
 
-app.post('/upload', upload.single('file'), async (req, res) => {
+async function backfillClerkUsersToMongo() {
+  if (!clerkClient) {
+    console.warn('Skipping Clerk backfill: CLERK_SECRET_KEY is not configured.');
+    return;
+  }
+
+  const limit = 100;
+  let offset = 0;
+  let synced = 0;
+
+  while (true) {
+    const page = await clerkClient.users.getUserList({ limit, offset });
+    const users = (page && page.data) || [];
+    if (users.length === 0) break;
+
+    for (const cu of users) {
+      const primaryEmail = cu.emailAddresses.find((e) => e.id === cu.primaryEmailAddressId);
+      const email = primaryEmail ? primaryEmail.emailAddress : (cu.emailAddresses[0] && cu.emailAddresses[0].emailAddress) || null;
+      const fullName = [cu.firstName, cu.lastName].filter(Boolean).join(' ').trim();
+      const name = fullName || cu.username || null;
+
+      await User.updateOne(
+        { clerkId: cu.id },
+        {
+          $set: {
+            email,
+            name
+          },
+          $setOnInsert: {
+            createdAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      synced += 1;
+    }
+
+    if (users.length < limit) break;
+    offset += limit;
+  }
+
+  console.log(`Clerk backfill complete. Synced users: ${synced}`);
+}
+
+async function upsertUserFromAuth(req) {
+  if (!req.userId) {
+    throw new Error('Missing authenticated user id');
+  }
+
+  let email = req.userEmail || null;
+  let name = null;
+
+  if (clerkClient) {
+    try {
+      const clerkUser = await clerkClient.users.getUser(req.userId);
+      if (!email) {
+        const primaryEmail = clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId);
+        email = primaryEmail ? primaryEmail.emailAddress : null;
+      }
+      const fullName = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ').trim();
+      name = fullName || clerkUser.username || null;
+    } catch (err) {
+      console.warn('Unable to enrich Clerk user profile:', err && (err.message || err));
+    }
+  }
+
+  let user = await User.findOne({ clerkId: req.userId });
+  if (!user) {
+    user = await User.create({
+      clerkId: req.userId,
+      email,
+      name
+    });
+  } else {
+    if (email && user.email !== email) user.email = email;
+    if (name && user.name !== name) user.name = name;
+    await user.save();
+  }
+
+  return user;
+}
+
+app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
+  try {
+    if (!clerkClient) {
+      return res.status(500).json({ error: 'CLERK_SECRET_KEY is not configured' });
+    }
+
+    const user = await upsertUserFromAuth(req);
+
+    return res.json({
+      message: 'User synced',
+      userId: user.clerkId
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'User sync failed' });
+  }
+});
+
+app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'file required' });
+    }
+
+    try {
+      await upsertUserFromAuth(req);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to persist authenticated user' });
     }
 
     const ext = path.extname(req.file.originalname || '').toLowerCase();
@@ -197,7 +310,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
       try {
         const folder = finalPdfResult.folder || cleanFolderName(finalPdfResult.document_type);
-        const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+        const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage', req.userId));
         const targetDir = path.join(storageRoot, folder);
         const targetPath = path.join(targetDir, req.file.originalname);
         if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
@@ -255,7 +368,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         // If we have a finalResult from either ML or Vision LLM, persist the original and return
         if (finalResult) {
           const folder = finalResult.folder || cleanFolderName(finalResult.document_type);
-          const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+          const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage', req.userId));
           const targetDir = path.join(storageRoot, folder);
           const targetPath = path.join(targetDir, req.file.originalname);
           try {
@@ -301,7 +414,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     // No page produced a confident ML/LLM result. Final fallback: move original to Other/Unknown and return Unknown.
     try {
       const folder = 'Other/Unknown';
-      const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+      const storageRoot = path.resolve(path.join(__dirname, '..', '..', 'storage', req.userId));
       const targetDir = path.join(storageRoot, folder);
       const targetPath = path.join(targetDir, req.file.originalname);
       if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
@@ -345,5 +458,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
 app.listen(5000, () => {
   console.log('Backend running on port 5000');
+  connectDB()
+    .then(() => backfillClerkUsersToMongo())
+    .catch((err) => console.error('MongoDB/Clerk init error:', err && (err.message || err)));
   try { cleanup.start(); } catch (e) { console.error('cleanup start failed', e && e.message); }
 });
