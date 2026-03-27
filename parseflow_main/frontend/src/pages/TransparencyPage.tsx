@@ -21,6 +21,16 @@ const pipelineSteps = [
 
 const COLORS = ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#06B6D4', '#6366F1', '#14B8A6'];
 
+function shouldIncludeInAccuracy(doc: BackendDocument): boolean {
+  const method = String(doc.method || '').toLowerCase();
+  const docType = String(doc.document_type || '').toLowerCase();
+  const unknownType = !docType || docType.includes('unknown');
+  const storageOnly = method.includes('manual upload') || method.includes('storage sync');
+  const visionOrFallback = method.includes('vision') || method.includes('fallback');
+  if (storageOnly) return false;
+  return !(unknownType && visionOrFallback);
+}
+
 export default function TransparencyPage() {
   const { getToken } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -63,6 +73,8 @@ export default function TransparencyPage() {
     return acc;
   }, {});
 
+  const aiMetricDocs = documents.filter(shouldIncludeInAccuracy);
+
   const confidenceRanges = [
     { range: '80-85%', count: 0 },
     { range: '85-90%', count: 0 },
@@ -71,7 +83,7 @@ export default function TransparencyPage() {
     { range: '98-100%', count: 0 }
   ];
 
-  documents.forEach(doc => {
+  aiMetricDocs.forEach(doc => {
     const conf = doc.confidence || 0;
     if (conf >= 80 && conf < 85) confidenceRanges[0].count++;
     else if (conf >= 85 && conf < 90) confidenceRanges[1].count++;
@@ -80,7 +92,7 @@ export default function TransparencyPage() {
     else if (conf >= 98) confidenceRanges[4].count++;
   });
 
-  const timelineData = documents
+  const timelineData = aiMetricDocs
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     .slice(-30)
     .map((doc, idx) => ({
@@ -90,7 +102,7 @@ export default function TransparencyPage() {
       processingTime: (doc.metadata?.processing_time_ms || 0) / 1000
     }));
 
-  const accuracyVsTime = documents.map(doc => ({
+  const accuracyVsTime = aiMetricDocs.map(doc => ({
     x: Math.round((doc.metadata?.processing_time_ms || 0) / 10),
     y: doc.accuracy || doc.confidence || 0,
     method: doc.method
@@ -105,6 +117,8 @@ export default function TransparencyPage() {
     name: key,
     value: value as number
   }));
+
+  const accuracyEligibleDocs = aiMetricDocs;
 
   if (loading) {
     return (
@@ -135,8 +149,8 @@ export default function TransparencyPage() {
         <div className="card-brutal">
           <p className="font-mono text-[10px] text-muted-foreground uppercase mb-2">Avg Accuracy</p>
           <p className="font-heading text-4xl text-primary">
-            {documents.length > 0 
-              ? Math.round(documents.reduce((sum, doc) => sum + (doc.accuracy ?? doc.confidence ?? 0), 0) / documents.length)
+            {accuracyEligibleDocs.length > 0 
+              ? Math.round(accuracyEligibleDocs.reduce((sum, doc) => sum + (doc.accuracy ?? doc.confidence ?? 0), 0) / accuracyEligibleDocs.length)
               : 0}%
           </p>
         </div>

@@ -1,7 +1,7 @@
-import { MoreVertical, Plus } from "lucide-react";
+import { MoreVertical, Upload } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useEffect, useState } from "react";
-import { deleteUserDocument, fetchUserDocuments, type BackendDocument } from "@/lib/backend-api";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { deleteUserDocument, fetchUserDocuments, uploadDocumentToFolder, type BackendDocument } from "@/lib/backend-api";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +28,7 @@ const categoryConfig: Record<string, { emoji: string; color: string }> = {
   Compliance: { emoji: '📋', color: 'border-l-warning' },
   Tax: { emoji: '💼', color: 'border-l-destructive' },
   Business: { emoji: '🏢', color: 'border-l-muted-foreground' },
+  Other: { emoji: '🗂️', color: 'border-l-border' },
 };
 
 export default function DocumentsPage() {
@@ -37,6 +38,9 @@ export default function DocumentsPage() {
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<BackendDocument | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [folderUploadTarget, setFolderUploadTarget] = useState<string | null>(null);
+  const [uploadingFolder, setUploadingFolder] = useState<string | null>(null);
+  const folderUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -166,12 +170,48 @@ export default function DocumentsPage() {
     }
   };
 
+  const openFolderUploadPicker = (folder: string) => {
+    setFolderUploadTarget(folder);
+    if (folderUploadInputRef.current) {
+      folderUploadInputRef.current.value = '';
+      folderUploadInputRef.current.click();
+    }
+  };
+
+  const onFolderFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file || !folderUploadTarget) return;
+
+    setUploadingFolder(folderUploadTarget);
+    try {
+      const token = await getReliableToken();
+      if (!token) throw new Error('Authentication token missing. Please sign in again.');
+
+      const response = await uploadDocumentToFolder(file, folderUploadTarget, token);
+      if (response && response.document) {
+        setDocs((prev) => [response.document, ...prev]);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to upload into folder. Please try again.';
+      window.alert(message);
+    } finally {
+      setUploadingFolder(null);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-5xl">
       <h2 className="font-heading text-3xl text-foreground tracking-wider">DOCUMENT ORGANIZER</h2>
 
+      <input
+        ref={folderUploadInputRef}
+        type="file"
+        className="hidden"
+        onChange={onFolderFileSelected}
+      />
+
       {/* Category Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
         {categories.map((cat) => (
           <button
             key={cat.name}
@@ -213,7 +253,18 @@ export default function DocumentsPage() {
               <div key={folder} className="space-y-2">
                 <div className="flex items-center justify-between px-1">
                   <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">{folder}</p>
-                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">{folderDocs.length}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => openFolderUploadPicker(folder)}
+                      className="h-7 px-2 rounded-sm bg-secondary text-foreground hover:bg-secondary/80 transition-colors duration-200 font-mono text-[10px] uppercase tracking-wider"
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        <Upload className="h-3 w-3" />
+                        {uploadingFolder === folder ? 'Uploading...' : 'Upload Here'}
+                      </span>
+                    </button>
+                    <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">{folderDocs.length}</span>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   {folderDocs.length === 0 ? (
@@ -269,14 +320,6 @@ export default function DocumentsPage() {
           )}
         </div>
       </div>
-
-      {/* FAB */}
-      <button
-        onClick={createCustomFolder}
-        className="fixed bottom-6 right-24 z-40 h-14 w-14 rounded-sm gradient-primary flex items-center justify-center text-primary-foreground shadow-card hover:opacity-90 transition-opacity duration-200"
-      >
-        <Plus className="h-6 w-6" />
-      </button>
 
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>

@@ -228,19 +228,12 @@ async function upsertUserFromAuth(req) {
 }
 
 function deriveCategory(result) {
-  const fromResult = normalizeCategory(result && result.category);
-  if (fromResult) return fromResult;
-
   const docType = deriveDocType(result);
   const inferred = inferCategoryFromDocType(docType);
   if (inferred) return inferred;
 
-  if (result && result.folder) {
-    const folder = String(result.folder);
-    const fromFolder = normalizeCategory(folder.includes('/') ? folder.split('/')[0] : folder);
-    if (fromFolder) return fromFolder;
-  }
-
+  // If we cannot confidently map doc type to a supported category,
+  // force it into Other (while preserving predicted doc type folder name).
   return 'Other';
 }
 
@@ -311,7 +304,11 @@ function inferCategoryFromDocType(docType) {
 
 function createStorageTarget({ userId, result, filename }) {
   const category = deriveCategory(result) || 'Other';
-  const docType = deriveDocType(result).replace(/\s+/g, '_');
+  const docTypeRaw = deriveDocType(result);
+  const docType = String(docTypeRaw || 'Unknown')
+    .replace(/[^a-zA-Z0-9 ]/g, ' ')
+    .trim()
+    .replace(/\s+/g, '_') || 'Unknown';
   const targetDir = path.resolve(path.join(__dirname, '..', '..', 'storage', userId, category, docType));
   const targetPath = path.join(targetDir, filename);
   return { category, docType, targetDir, targetPath };
@@ -903,6 +900,117 @@ app.post('/api/sync-storage', authMiddleware, async (req, res) => {
     return res.json({ success: true, ...result });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Storage sync failed' });
+  }
+});
+
+function sanitizeFolderPath(input) {
+  const raw = String(input || '');
+  const parts = raw
+    .split('/')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => p.replace(/[^a-zA-Z0-9 _-]/g, ''))
+    .filter(Boolean);
+
+  if (parts.length < 2) return null;
+  return parts.join('/');
+}
+
+app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'file required' });
+    }
+
+    const selectedFolder = sanitizeFolderPath(req.body && req.body.folder);
+    if (!selectedFolder) {
+      return res.status(400).json({ error: 'folder required in Category/Folder format' });
+    }
+
+    try {
+      await upsertUserFromAuth(req);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to persist authenticated user' });
+    }
+
+    const uploadStartTs = Date.now();
+    const originalPath = path.resolve(req.file.path);
+    const folderParts = selectedFolder.split('/');
+    const userRoot = path.resolve(path.join(STORAGE_ROOT, req.userId));
+    const targetDir = path.resolve(path.join(userRoot, ...folderParts));
+
+    // Block traversal and ensure all writes remain under this user's root.
+    if (!targetDir.startsWith(userRoot)) {
+      return res.status(400).json({ error: 'Invalid folder path' });
+    }
+
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    const targetPath = path.join(targetDir, req.file.originalname);
+    await safeMoveFile(originalPath, targetPath);
+
+    const category = folderParts[0] || 'Other';
+    const docTypePath = folderParts.slice(1).join('/');
+    const docTypeLeaf = folderParts[folderParts.length - 1] || 'Manual Upload';
+    const documentType = docTypeLeaf.replace(/_/g, ' ');
+    const fileUrl = makeFileUrl(targetPath);
+
+    const manualResult = {
+      document_type: documentType,
+      category,
+      folder: selectedFolder,
+      accuracy: 0,
+      confidence: 0,
+      method: 'Manual Upload',
+      extracted_text: '',
+      key_fields: {},
+      processing_time_ms: Date.now() - uploadStartTs
+    };
+
+    const savedDoc = await Document.create({
+      userId: req.userId,
+      filename: req.file.originalname,
+      filePath: targetPath,
+      document_type: documentType,
+      category,
+      accuracy: 0,
+      confidence: 0,
+      processing_time_ms: Number(manualResult.processing_time_ms) || 0,
+      method: 'Manual Upload',
+      metadata: {},
+      extracted_text: '',
+      llm_analysis: {},
+      storage: {
+        category,
+        docType: docTypePath,
+        filePath: targetPath,
+        fileUrl
+      },
+      classification: {
+        document_type: documentType,
+        category,
+        accuracy: 0,
+        confidence: 0,
+        method: 'Manual Upload'
+      }
+    });
+
+    try {
+      await createNotification(req.userId, `Manual upload successful: ${savedDoc.filename}`, 'ORGANIZATION');
+      await createNotification(req.userId, `Stored under ${selectedFolder}`, 'ORGANIZATION');
+    } catch (notifyErr) {
+      console.error('Manual upload notification flow failed:', notifyErr && (notifyErr.message || notifyErr));
+    }
+
+    return res.json({
+      success: true,
+      document: { ...savedDoc.toObject(), fileUrl },
+      result: manualResult
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Manual folder upload failed' });
   }
 });
 

@@ -10,6 +10,16 @@ function formatUploadedAt(ts: string): string {
   return when.toLocaleString();
 }
 
+function shouldIncludeInAccuracy(doc: BackendDocument): boolean {
+  const method = String(doc.method || '').toLowerCase();
+  const docType = String(doc.document_type || '').toLowerCase();
+  const unknownType = !docType || docType.includes('unknown');
+  const storageOnly = method.includes('manual upload') || method.includes('storage sync');
+  const visionOrFallback = method.includes('vision') || method.includes('fallback');
+  if (storageOnly) return false;
+  return !(unknownType && visionOrFallback);
+}
+
 export default function HomePage() {
   const navigate = useNavigate();
   const { user, getAuthToken } = useAuth();
@@ -38,9 +48,10 @@ export default function HomePage() {
   }, [user, getAuthToken]);
 
   const thisWeek = docs.filter(d => Date.now() - new Date(d.createdAt).getTime() < 7 * 86400000).length;
-  const aiAccuracy = docs.length
+  const accuracyEligibleDocs = docs.filter(shouldIncludeInAccuracy);
+  const aiAccuracy = accuracyEligibleDocs.length
     ? Math.round(
-      docs.reduce((sum, doc) => sum + Number(doc.accuracy ?? doc.confidence ?? 0), 0) / docs.length
+      accuracyEligibleDocs.reduce((sum, doc) => sum + Number(doc.accuracy ?? doc.confidence ?? 0), 0) / accuracyEligibleDocs.length
     )
     : 0;
 

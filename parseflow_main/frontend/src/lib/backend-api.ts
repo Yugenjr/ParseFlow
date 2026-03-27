@@ -78,6 +78,17 @@ export async function uploadDocument(file: File, token: string, onProgress?: (pe
   return resp.data as UploadResponse;
 }
 
+export async function uploadDocumentToFolder(file: File, folder: string, token: string): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('folder', folder);
+
+  const resp = await axios.post(`${backendBaseUrl}/api/folders/upload`, formData, {
+    headers: buildAuthHeaders(token)
+  });
+  return resp.data as UploadResponse;
+}
+
 export async function fetchUserDocuments(token: string): Promise<BackendDocument[]> {
   const resp = await axios.get(`${backendBaseUrl}/documents`, {
     headers: buildAuthHeaders(token)

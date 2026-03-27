@@ -10,17 +10,18 @@ Return STRICT JSON only. Do NOT add prose or explanation.
 OBJECTIVE:
 1. Perform OCR on the provided image.
 2. Return full extracted text from OCR in an "extracted_text" field.
-3. Identify the specific document type in "document_type" (examples: Aadhaar Card, PAN Card, Passport, Driving License, GSTR 3B, GST Return, Form 16, ITR Acknowledgment, Bank Statement, Invoice, Receipt, Legal Agreement, Business Registration, Unknown).
+3. Identify the specific document type in "document_type" (examples: Aadhaar Card, PAN Card, Passport, Driving License, GSTR 3B, GST Return, Form 16, ITR Acknowledgment, Bank Statement, Invoice, Receipt, Legal Agreement, Business Registration, Coding Notes, Class Notes, Unknown).
 3. Extract key fields when present (name, id_number, date_of_birth, document_number, issuing_authority).
 4. Assign storage category in "category" using ONLY one of: Identity, Financial, Legal, Tax, Business, Other.
 5. IMPORTANT: category must be broad taxonomy (example: if document_type is "GSTR 3B", category must be "Tax").
 6. Suggest folder as Category/Document_Type.
 7. Provide both "confidence" and "accuracy" as percentage between 0 and 100 (integer preferred). "accuracy" must represent this Vision analysis confidence.
+8. If content does NOT clearly fit Identity/Financial/Legal/Tax/Business, set category to "Other" and keep a meaningful alternate name in "document_type" (example: "Coding Notes", "Study Notes", "General Notes").
 
 RULES:
 - NEVER return text outside JSON.
 - NEVER hallucinate fields — if missing set to null.
-- If unsure -> document_type = "Unknown", category = "Other".
+- If unreadable or fully ambiguous -> document_type = "Unknown", category = "Other".
 
 OUTPUT FORMAT (STRICT JSON ONLY):
 {
