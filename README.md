@@ -1,254 +1,151 @@
-# ParseFlow — Intelligent Document Understanding System
+# ParseFlow
 
-ParseFlow is a hybrid AI-powered system that automatically classifies and organizes documents using a combination of image-based deep learning, OCR, and LLM-based semantic analysis.
+ParseFlow is an AI-powered document intelligence platform that classifies, stores, and organizes uploaded files (PDF, JPG, JPEG, PNG) into structured folders with searchable history and feedback-driven improvements.
 
----
+## What Is Included
 
-## Problem Statement
+- Hybrid classification path with confidence-based fallback
+- Category-aware storage (`Identity`, `Financial`, `Legal`, `Compliance`, `Tax`, `Business`, `Other`)
+- Auto folder creation by category and document type
+- History and document explorer with category filtering and search
+- Feedback flow for top history item (`Correct` / `Wrong`)
+- Optional Google Drive auto-sync
+- Security extensions: auth middleware, encrypted extracted payload storage, file hash integrity, secure file access route
 
-Organizations and individuals handle a wide variety of documents daily, including identity proofs, financial records, legal agreements, and tax documents. These documents are often received in unstructured formats such as images or PDFs.
+## System Flow
 
-Manual classification and organization of these documents is:
-
-* Time-consuming
-* Error-prone
-* Inefficient
-
-The challenge is to build an intelligent system that can automatically classify and organize documents while handling both known and unknown document types.
-
----
-
-## Solution Overview
-
-ParseFlow introduces a hybrid classification system that combines:
-
-* Image-based classification (for known documents)
-* OCR + LLM-based semantic analysis (for unknown documents)
-
-This ensures:
-
-* Fast processing for common documents
-* Flexible handling of diverse document types
-
----
-
-## System Architecture
-
-### Core Flow
-
-```
-Upload → Image Classifier → (Confidence Check)
-        → High Confidence → Final Classification
-        → Low Confidence → OCR → LLM → Classification
-        → Storage → Dashboard
-```
-
-### Components
-
-* Frontend (React.js)
-  Upload interface, dashboard, results visualization
-
-* Backend (Node.js / Express)
-  API handling, routing, decision engine
-
-* Image Classifier (MobileNetV2)
-  Detects Aadhaar, PAN, Passport, Driving License
-
-* OCR Engine (Tesseract)
-  Extracts multilingual text from documents
-
-* LLM Module (GPT / API)
-  Performs contextual classification and reasoning
-
-* Storage System
-  Stores files and metadata in categorized structure
-  
----
 ```mermaid
 flowchart TD
+    A[Upload Document] --> B[Backend /upload]
+    B --> C{File Type}
 
-    A["User Uploads Document"] --> B["Backend Receives File"]
+    C -->|PDF| D[Convert PDF to Images\nup to 3 pages]
+    D --> E[Vision LLM Classification\nper page]
+    E --> F{Known Doc Type?}
+    F -->|Yes| G[Use Vision Result]
+    F -->|No| H[Fallback Unknown/Other]
 
-    B --> C["Preprocessing"]
-    C --> D["Image Classification Model<br>(MobileNetV2)"]
+    C -->|Image| I[ML Classifier]
+    I --> J{Confidence >= Threshold}
+    J -->|Yes| K[Use ML Result]
+    J -->|No| L[Vision LLM Fallback]
 
-    D --> E{"Confidence >= Threshold?"}
+    G --> M[Derive Category + DocType]
+    H --> M
+    K --> M
+    L --> M
 
-    E -- Yes --> F["Assign Category<br>(Aadhaar / PAN / Passport / DL)"]
-    E -- No --> G["OCR Engine<br>(Tesseract)"]
+    M --> N[Persist File to Storage\nstorage/userId/category/docType/file]
+    N --> O[Persist Metadata to MongoDB]
+    O --> P[Security Layer\nfileHash + encryptedData]
+    P --> Q[Optional Google Drive Sync]
+    Q --> R[API Response]
 
-    G --> H["Extracted Text"]
-    H --> I["LLM Classification<br>(Semantic Analysis)"]
-
-    I --> J["Predicted Category + Confidence + Reason"]
-
-    F --> K["Final Classification"]
-    J --> K
-
-    K --> L["Store Document"]
-    L --> M["Organize into Categories<br>(Identity / Financial / Legal / Other)"]
-
-    M --> N["Save Metadata<br>(JSON / DB)"]
-
-    N --> O["Return Result to Frontend"]
-
-    O --> P["Dashboard Display<br>(Table + Insights + Confidence)"]
+    R --> S[Frontend: Documents + History + Feedback]
+    S --> T[Feedback Submitted\nCorrect/Wrong]
+    T --> U[Next Top History Document]
 ```
 
-## AI Approach
+## Current Architecture
 
-ParseFlow uses a multi-level understanding strategy:
+- Frontend: React + Vite + TypeScript
+- Backend: Node.js + Express + MongoDB
+- Classification: ML first, Vision LLM fallback for low confidence/unknown cases
+- Storage: Local file system under user/category/doc-type path
+- Auth: Clerk token verification (plus `x-user-id` compatibility path)
 
-### 1. Visual Understanding
-
-* Uses MobileNetV2 to classify based on document layout and patterns
-
-### 2. Contextual Understanding
-
-* Uses OCR + LLM to interpret document content
-* Identifies keywords, intent, and semantic meaning
-
-### 3. Hybrid Decision Logic
-
-* High confidence → Image model
-* Low confidence → OCR + LLM fallback
-
----
-
-## Technology Stack
-
-### Frontend
-
-* React.js
-* Tailwind CSS
-
-### Backend
-
-* Node.js (Express)
-* REST APIs
-
-### AI / ML
-
-* TensorFlow / Keras
-* MobileNetV2 (.h5 model)
-
-### OCR
-
-* Tesseract OCR
-
-### LLM Integration
-
-* OpenAI GPT / similar APIs
-
-### Supporting Tools
-
-* NumPy
-* Pillow (PIL)
-* pdf2image
-
----
-
-## Unique Features
-
-* Hybrid classification system combining deep learning and LLM-based understanding
-* Explainable outputs with confidence scores and reasoning
-* Multilingual document support (English and Hindi)
-* Automatic document organization with structured storage
-* Confidence-based decision engine for reliable classification
-
----
-
-## Impact and Value
-
-### Individuals
-
-* Simplifies document organization
-* Enables faster access to important files
-
-### Businesses and SMEs
-
-* Reduces manual effort
-* Improves operational efficiency
-
-### Organizations
-
-* Scalable document processing
-* Improved classification accuracy
-
----
-
-## Project Structure (Sample)
+## Repository Layout
 
 ```
-/frontend        → React application
-/backend         → Node.js server
-/models          → ML models (.h5)
-/ocr             → OCR processing
-/storage         → Document storage
+parseflow_main/
+  backend/     # Express API, classification orchestration, storage sync, notifications
+  frontend/    # React/Vite UI
+  ml-service/  # Python services for model/OCR-related tasks
+  storage/     # Persisted documents
 ```
 
----
+## Quick Start
 
-## How to Run
+### 1. Install dependencies
 
-### 1. Clone the Repository
+From repository root:
 
-```
-git clone https://github.com/your-repo/parseflow.git
-cd parseflow
-```
-
-### 2. Install Dependencies
-
-#### Backend
-
-```
-cd backend
-npm install
+```powershell
+npm --prefix "parseflow_main/backend" install
+npm --prefix "parseflow_main/frontend" install
 ```
 
-#### Frontend
+### 2. Configure environment
 
-```
-cd frontend
-npm install
-```
+Backend env:
 
----
+- Copy `parseflow_main/backend/.env.example` to `parseflow_main/backend/.env`
+- Set required values (`CLERK_SECRET_KEY`, `MONGO_URI`, `GROQ_API_KEY`, `DATA_ENCRYPTION_KEY`, etc.)
 
-### 3. Run the Application
+Frontend env:
 
-#### Start Backend
+- Set `VITE_BACKEND_URL` in `parseflow_main/frontend/.env`
+- Local default is usually `http://localhost:5000`
 
-```
+### 3. Start services
+
+Backend:
+
+```powershell
+cd "parseflow_main/backend"
 npm start
 ```
 
-#### Start Frontend
+Frontend:
 
-```
+```powershell
+cd "parseflow_main/frontend"
 npm run dev
 ```
 
----
+If port `5000` is already in use, stop the existing process first, then restart backend.
 
-## Future Enhancements
+## Security Enhancements
 
-* Support for additional document categories
-* Improved multilingual support
-* Cloud storage integration
-* Real-time collaboration features
-* Advanced anomaly detection
+- Middleware auth gate for protected routes
+- Extracted payload encryption before DB write (`encryptedData`)
+- SHA-256 integrity hash per stored file (`fileHash`)
+- Secure file route with user-level access validation for authenticated requests
+- Env-based secret handling (`DATA_ENCRYPTION_KEY` and related credentials)
 
----
+## Category and Folder Behavior
 
-## Conclusion
+- Backend now preserves explicit `Compliance` category from model output.
+- Compliance docs are stored under `Compliance/...`, not forced to `Other`.
+- UI category rendering prefers:
+  1. `storage.category`
+  2. `classification.category`
+  3. `category`
+  4. fallback `Other`
 
-ParseFlow is a scalable and intelligent document classification system that goes beyond traditional approaches. By combining visual recognition with contextual understanding, it provides a robust solution for real-world document processing.
+## Troubleshooting
 
-It transforms unstructured documents into organized and meaningful data, improving efficiency, accuracy, and usability.
+### Backend does not start (`EADDRINUSE` on 5000)
 
----
+```powershell
+$conn = Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue
+if ($conn) { Stop-Process -Id $conn.OwningProcess -Force }
+cd "parseflow_main/backend"
+npm start
+```
+
+### UI still shows old category/result
+
+- Ensure backend is running latest code (not stale node process)
+- Re-upload document after backend restart
+- Hard refresh frontend browser tab
+- Verify `VITE_BACKEND_URL` points to active backend
+
+## Additional Documentation
+
+For full onboarding and operations details, see:
+
+- [implementation guide.md](implementation%20guide.md)
 
 ## Team
 

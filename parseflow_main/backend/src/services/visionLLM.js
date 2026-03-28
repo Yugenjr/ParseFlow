@@ -12,11 +12,12 @@ OBJECTIVE:
 2. Return full extracted text from OCR in an "extracted_text" field.
 3. Identify the specific document type in "document_type" (examples: Aadhaar Card, PAN Card, Passport, Driving License, GSTR 3B, GST Return, Form 16, ITR Acknowledgment, Bank Statement, Invoice, Receipt, Legal Agreement, Business Registration, Coding Notes, Class Notes, Unknown).
 3. Extract key fields when present (name, id_number, date_of_birth, document_number, issuing_authority).
-4. Assign storage category in "category" using ONLY one of: Identity, Financial, Legal, Tax, Business, Other.
+4. Assign storage category in "category" using ONLY one of: Identity, Financial, Legal, Compliance, Tax, Business, Other.
 5. IMPORTANT: category must be broad taxonomy (example: if document_type is "GSTR 3B", category must be "Tax").
 6. Suggest folder as Category/Document_Type.
-7. Provide both "confidence" and "accuracy" as percentage between 0 and 100 (integer preferred). "accuracy" must represent this Vision analysis confidence.
-8. If content does NOT clearly fit Identity/Financial/Legal/Tax/Business, set category to "Other" and keep a meaningful alternate name in "document_type" (example: "Coding Notes", "Study Notes", "General Notes").
+7. If the document is any compliance artifact (for example: certificate of compliance, conformity certificate, ISO compliance certificate, CSA/FCC/CE compliance records, regulatory compliance forms), category MUST be "Compliance" and folder MUST start with "Compliance/".
+8. Provide both "confidence" and "accuracy" as percentage between 0 and 100 (integer preferred). "accuracy" must represent this Vision analysis confidence.
+9. If content does NOT clearly fit Identity/Financial/Legal/Compliance/Tax/Business, set category to "Other" and keep a meaningful alternate name in "document_type" (example: "Coding Notes", "Study Notes", "General Notes").
 
 RULES:
 - NEVER return text outside JSON.

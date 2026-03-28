@@ -12,7 +12,9 @@ const User = require('./models/User');
 const Document = require('./models/Document');
 const QueryEvent = require('./models/QueryEvent');
 const Notification = require('./models/Notification');
-const { authMiddleware } = require('./middleware/authMiddleware');
+const authMiddleware = require('./middleware/authMiddleware');
+const { encrypt } = require('./utils/encryption');
+const { generateFileHash } = require('./utils/hash');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
 const { askGuideBot } = require('./services/guidebotService');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
@@ -43,15 +45,52 @@ const corsOptions = {
     return callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id'],
   credentials: true,
 };
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
-app.use('/files', express.static(path.resolve(path.join(__dirname, '..', '..', 'storage'))));
 const STORAGE_ROOT = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+
+app.get('/files/:userId/:category/:docType/:filename', (req, res, next) => {
+  const hasAuthHeaders = Boolean(req.headers.authorization || req.headers['x-user-id']);
+  if (!hasAuthHeaders) {
+    // Backward compatibility: if no auth headers are present, continue to static file serving.
+    return next();
+  }
+
+  return authMiddleware(req, res, () => {
+    try {
+      if (req.params.userId !== req.userId) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      const secureFilePath = path.resolve(path.join(
+        STORAGE_ROOT,
+        req.params.userId,
+        req.params.category,
+        req.params.docType,
+        req.params.filename
+      ));
+
+      if (!secureFilePath.startsWith(path.join(STORAGE_ROOT, req.params.userId))) {
+        return res.status(400).json({ error: 'Invalid file path' });
+      }
+
+      if (!fs.existsSync(secureFilePath)) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+
+      return res.sendFile(secureFilePath);
+    } catch (err) {
+      return res.status(500).json({ error: 'File access failed' });
+    }
+  });
+});
+
+app.use('/files', express.static(STORAGE_ROOT));
 
 // Store uploads in backend/uploads (one level above src)
 const UPLOADS_DIR = path.resolve(path.join(__dirname, '..', 'uploads'));
@@ -124,7 +163,7 @@ const STORAGE_ALERTS = [
 ];
 
 const CONFIDENCE_THRESHOLD_PERCENT = 97;
-const ALLOWED_CATEGORIES = new Set(['Identity', 'Financial', 'Legal', 'Tax', 'Business', 'Other']);
+const ALLOWED_CATEGORIES = new Set(['Identity', 'Financial', 'Legal', 'Compliance', 'Tax', 'Business', 'Other']);
 const DOCBOT_GROQ_API_URL = process.env.DOCBOT_GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const DOCBOT_GROQ_MODEL = process.env.DOCBOT_GROQ_MODEL || 'llama-3.1-8b-instant';
 const DOCBOT_GROQ_API_KEY = process.env.DOCBOT_GROQ_API_KEY || process.env.GUIDEBOT_GROQ_API_KEY || process.env.GROQ_API_KEY;
@@ -346,6 +385,9 @@ function buildUploadSuccessResponse({ savedDoc, result }) {
 }
 
 function deriveCategory(result) {
+  const explicit = normalizeCategory(result && result.category);
+  if (explicit) return explicit;
+
   const docType = deriveDocType(result);
   const inferred = inferCategoryFromDocType(docType);
   if (inferred) return inferred;
@@ -398,6 +440,7 @@ function normalizeCategory(value) {
     financial: 'Financial',
     finance: 'Financial',
     legal: 'Legal',
+    compliance: 'Compliance',
     tax: 'Tax',
     taxation: 'Tax',
     business: 'Business',
@@ -413,6 +456,7 @@ function inferCategoryFromDocType(docType) {
   if (!t) return null;
   if (/(aadhaar|aadhar|pan|passport|driving|license|licence|voter|id\b)/.test(t)) return 'Identity';
   if (/(invoice|receipt|bill|bank|statement|salary|pay\s*slip)/.test(t)) return 'Financial';
+  if (/(compliance|conformity|certificate\s*of\s*compliance|regulatory|csa\s*international|\bce\b|\bfcc\b)/.test(t)) return 'Compliance';
   if (/(gstr|gst|itr|form\s*16|tax|t[ -]?ds)/.test(t)) return 'Tax';
   if (/(agreement|contract|legal|deed|affidavit)/.test(t)) return 'Legal';
   if (/(registration|incorporation|msme|business|company)/.test(t)) return 'Business';
@@ -588,6 +632,27 @@ async function persistDocumentForUser({ req, result, filePath }) {
     }
     : {};
 
+  let fileHash = '';
+  try {
+    const fileBuffer = fs.readFileSync(filePath);
+    fileHash = generateFileHash(fileBuffer);
+  } catch (err) {
+    console.error('File hash generation failed:', err && (err.message || err));
+  }
+
+  const encryptedData = encrypt({
+    extracted_text: extractedText,
+    key_fields: (result && result.key_fields) || {},
+    llm_analysis: llmAnalysis,
+    classification: {
+      document_type: deriveDocType(result),
+      category,
+      accuracy,
+      confidence,
+      method: (result && result.method) || 'Unknown'
+    }
+  });
+
   return Document.create({
     userId: req.userId,
     filename: req.file.originalname,
@@ -600,6 +665,8 @@ async function persistDocumentForUser({ req, result, filePath }) {
     method: (result && result.method) || 'Unknown',
     metadata: (result && result.key_fields) || {},
     extracted_text: extractedText,
+    encryptedData,
+    fileHash,
     llm_analysis: llmAnalysis,
     storage: {
       category,
@@ -719,6 +786,7 @@ async function persistAndNotify({ req, result, filePath }) {
 }
 
 app.use('/notifications', notificationRoutes);
+app.use('/upload', authMiddleware);
 
 app.post('/api/auth/sync-user', authMiddleware, async (req, res) => {
   try {
@@ -1152,6 +1220,14 @@ app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (re
     const documentType = docTypeLeaf.replace(/_/g, ' ');
     const fileUrl = makeFileUrl(targetPath);
 
+    let fileHash = '';
+    try {
+      const fileBuffer = fs.readFileSync(targetPath);
+      fileHash = generateFileHash(fileBuffer);
+    } catch (err) {
+      console.error('Manual upload hash generation failed:', err && (err.message || err));
+    }
+
     const manualResult = {
       document_type: documentType,
       category,
@@ -1176,6 +1252,19 @@ app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (re
       method: 'Manual Upload',
       metadata: {},
       extracted_text: '',
+      encryptedData: encrypt({
+        extracted_text: '',
+        key_fields: {},
+        llm_analysis: {},
+        classification: {
+          document_type: documentType,
+          category,
+          accuracy: 0,
+          confidence: 0,
+          method: 'Manual Upload'
+        }
+      }),
+      fileHash,
       llm_analysis: {},
       storage: {
         category,

@@ -19,10 +19,13 @@ SUPPORTED DOCUMENT TYPES:
 Aadhaar Card, PAN Card, Passport, Driving License, Bank Statement, Invoice, Receipt, Tax Document, Legal Agreement, Business Registration, Unknown
 
 STORAGE CATEGORIES:
-Identity, Financial, Legal, Tax, Business, Other
+Identity, Financial, Legal, Compliance, Tax, Business, Other
 
 FOLDER NAMING RULE:
 Return a clean folder name in this format: <category>/<document_type> (e.g., Identity/Aadhaar_Card)
+
+COMPLIANCE RULE:
+If the document is a compliance artifact (for example: certificate of compliance, conformity certificate, ISO compliance certificate, CSA/FCC/CE compliance records, regulatory compliance forms), set category to "Compliance" and folder to "Compliance/<document_type>".
 
 KEY FIELD EXTRACTION (PRIORITY RULES):
 - Aadhaar: 12-digit numeric (may contain spaces). Example: 1234 5678 9123 or 123456789123

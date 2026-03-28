@@ -43,6 +43,10 @@ const categoryConfig: Record<string, { icon: LucideIcon; color: string }> = {
   Other: { icon: FolderOpen, color: 'border-l-border' },
 };
 
+function getCategory(doc: BackendDocument): string {
+  return doc.storage?.category || doc.classification?.category || doc.category || 'Other';
+}
+
 export default function DocumentsPage() {
   const { user, getAuthToken } = useAuth();
   const [docs, setDocs] = useState<BackendDocument[]>([]);
@@ -94,7 +98,10 @@ export default function DocumentsPage() {
   }, [user, getAuthToken]);
 
   const catCounts: Record<string, number> = {};
-  docs.forEach(d => { catCounts[d.category] = (catCounts[d.category] || 0) + 1; });
+  docs.forEach((d) => {
+    const category = getCategory(d);
+    catCounts[category] = (catCounts[category] || 0) + 1;
+  });
 
   const categories = Object.entries(categoryConfig).map(([name, cfg]) => ({
     name,
@@ -102,7 +109,7 @@ export default function DocumentsPage() {
     count: catCounts[name] || 0,
   }));
 
-  const filteredDocs = selectedCat ? docs.filter(d => d.category === selectedCat) : docs;
+  const filteredDocs = selectedCat ? docs.filter((d) => getCategory(d) === selectedCat) : docs;
 
   const visibleCustomFolders = customFolders.filter((folder) => {
     if (!selectedCat) return true;
@@ -111,7 +118,7 @@ export default function DocumentsPage() {
   });
 
   const folderGroups = filteredDocs.reduce<Record<string, BackendDocument[]>>((acc, doc) => {
-    const category = doc.storage?.category || doc.category || 'Other';
+    const category = getCategory(doc);
     const docType = doc.storage?.docType || doc.document_type || 'Unknown';
     const key = `${category}/${docType}`;
     if (!acc[key]) acc[key] = [];
@@ -289,7 +296,7 @@ export default function DocumentsPage() {
                       <div
                         key={doc._id}
                         onClick={() => openDoc(doc)}
-                        className={`card-brutal card-brutal-hover flex items-center gap-4 border-l-4 ${categoryConfig[doc.category]?.color || ''} ${doc.fileUrl ? 'cursor-pointer' : ''}`}
+                        className={`card-brutal card-brutal-hover flex items-center gap-4 border-l-4 ${categoryConfig[getCategory(doc)]?.color || ''} ${doc.fileUrl ? 'cursor-pointer' : ''}`}
                       >
                         <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0">
                           <FileText className="h-5 w-5 text-primary" strokeWidth={1.8} />
@@ -299,7 +306,7 @@ export default function DocumentsPage() {
                           <p className="font-mono text-[10px] text-muted-foreground">{new Date(doc.createdAt).toLocaleDateString()}</p>
                         </div>
                         <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary uppercase">
-                          {doc.category}
+                          {getCategory(doc)}
                         </span>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>

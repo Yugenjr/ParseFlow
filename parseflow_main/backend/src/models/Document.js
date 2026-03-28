@@ -12,6 +12,8 @@ const documentSchema = new mongoose.Schema({
   method: { type: String, default: 'Unknown' },
   metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
   extracted_text: { type: String, default: '' },
+  encryptedData: { type: String, default: '' },
+  fileHash: { type: String, default: '' },
   llm_analysis: {
     summary: { type: String, default: '' },
     key_fields: { type: Object, default: {} }
