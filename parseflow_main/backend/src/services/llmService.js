@@ -24,8 +24,20 @@ Identity, Financial, Legal, Compliance, Tax, Business, Other
 FOLDER NAMING RULE:
 Return a clean folder name in this format: <category>/<document_type> (e.g., Identity/Aadhaar_Card)
 
+CATEGORY MAPPING RULES (STRICT):
+- Identity: Aadhaar Card, PAN Card, Passport, Driving License, Voter ID, personal identity proofs.
+- Financial: Invoice, Receipt, Bill, Bank Statement, Payment Receipt, Transaction Slip, Salary Slip, Expense Voucher, Train Ticket, Railway Ticket, Metro Ticket, Bus Ticket, Flight Ticket, Travel Booking/Itinerary documents.
+- Legal: Agreement, Contract, Deed, Affidavit, legal notices.
+- Compliance: compliance certificates/records and regulatory compliance forms.
+- Tax: GSTR forms, GST returns/challans, Form 16, ITR acknowledgments, TDS/tax records.
+- Business: business registration/incorporation/MSME/company registration records.
+- Other: only when none of the above categories applies.
+
 COMPLIANCE RULE:
 If the document is a compliance artifact (for example: certificate of compliance, conformity certificate, ISO compliance certificate, CSA/FCC/CE compliance records, regulatory compliance forms), set category to "Compliance" and folder to "Compliance/<document_type>".
+
+TRAIN TICKET RULE:
+If the document is a train/railway ticket or related travel expense ticket/booking, set category to "Financial" and folder to "Financial/<document_type>".
 
 KEY FIELD EXTRACTION (PRIORITY RULES):
 - Aadhaar: 12-digit numeric (may contain spaces). Example: 1234 5678 9123 or 123456789123
@@ -201,7 +213,7 @@ function heuristicParse(text) {
   }
 
   // Fallback: look for keywords for Financial docs
-  if (/Invoice|INVOICE|Total|Amount payable|Account No|Bank Statement|Statement/i.test(t)) {
+  if (/Invoice|INVOICE|Total|Amount payable|Account No|Bank Statement|Statement|Receipt|Payment|Transaction|Salary\s*Slip|Expense|Voucher|Train\s*Ticket|Railway\s*Ticket|Metro\s*Ticket|Bus\s*Ticket|Flight\s*Ticket|PNR|Itinerary|Booking\s*(ID|Reference)?/i.test(t)) {
     result.document_type = 'Invoice';
     result.category = 'Financial';
     result.folder = 'Financial/Invoice';

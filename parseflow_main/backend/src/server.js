@@ -388,6 +388,9 @@ function deriveCategory(result) {
   const explicit = normalizeCategory(result && result.category);
   if (explicit) return explicit;
 
+  const inferredFromResult = inferCategoryFromResult(result);
+  if (inferredFromResult) return inferredFromResult;
+
   const docType = deriveDocType(result);
   const inferred = inferCategoryFromDocType(docType);
   if (inferred) return inferred;
@@ -395,6 +398,27 @@ function deriveCategory(result) {
   // If we cannot confidently map doc type to a supported category,
   // force it into Other (while preserving predicted doc type folder name).
   return 'Other';
+}
+
+function inferCategoryFromResult(result) {
+  const merged = [
+    String((result && result.document_type) || ''),
+    String((result && result.folder) || ''),
+    String((result && result.extracted_text) || ''),
+    JSON.stringify((result && result.key_fields) || {})
+  ].join(' ').toLowerCase();
+
+  if (!merged.trim()) return null;
+
+  if (/(aadhaar|aadhar|pan|passport|driving|license|licence|voter\s*id|identity\s*card)/.test(merged)) return 'Identity';
+  if (/(train\s*ticket|railway\s*ticket|rail\s*ticket|metro\s*ticket|bus\s*ticket|flight\s*ticket|pnr\b|itinerary|travel\s*booking|expense\s*voucher|payment\s*receipt|invoice|receipt|bank\s*statement|transaction\s*slip|salary\s*slip)/.test(merged)) return 'Financial';
+  if (/(compliance|conformity|certificate\s*of\s*compliance|regulatory|csa\s*international|\bce\b|\bfcc\b)/.test(merged)) return 'Compliance';
+  if (/(gstr|gst|itr|form\s*16|tax|t[ -]?ds|challan)/.test(merged)) return 'Tax';
+  if (/(agreement|contract|legal|deed|affidavit|notice)/.test(merged)) return 'Legal';
+  if (/(registration|incorporation|msme|udyam|business|company)/.test(merged)) return 'Business';
+  if (merged.includes('unknown')) return 'Other';
+
+  return null;
 }
 
 function deriveDocType(result) {
@@ -455,7 +479,7 @@ function inferCategoryFromDocType(docType) {
   const t = String(docType || '').toLowerCase();
   if (!t) return null;
   if (/(aadhaar|aadhar|pan|passport|driving|license|licence|voter|id\b)/.test(t)) return 'Identity';
-  if (/(invoice|receipt|bill|bank|statement|salary|pay\s*slip)/.test(t)) return 'Financial';
+  if (/(invoice|receipt|bill|bank|statement|salary|pay\s*slip|train\s*ticket|railway\s*ticket|rail\s*ticket|metro\s*ticket|bus\s*ticket|flight\s*ticket|pnr|itinerary|travel\s*booking|expense\s*voucher|transaction\s*slip)/.test(t)) return 'Financial';
   if (/(compliance|conformity|certificate\s*of\s*compliance|regulatory|csa\s*international|\bce\b|\bfcc\b)/.test(t)) return 'Compliance';
   if (/(gstr|gst|itr|form\s*16|tax|t[ -]?ds)/.test(t)) return 'Tax';
   if (/(agreement|contract|legal|deed|affidavit)/.test(t)) return 'Legal';

@@ -14,10 +14,20 @@ OBJECTIVE:
 3. Extract key fields when present (name, id_number, date_of_birth, document_number, issuing_authority).
 4. Assign storage category in "category" using ONLY one of: Identity, Financial, Legal, Compliance, Tax, Business, Other.
 5. IMPORTANT: category must be broad taxonomy (example: if document_type is "GSTR 3B", category must be "Tax").
+6. CATEGORY-TO-FOLDER ENFORCEMENT: folder MUST always start with the exact category name followed by '/' and then a clean document type (example: Financial/Train_Ticket).
+7. CATEGORY MAPPING RULES (STRICT):
+  - Identity: Aadhaar Card, PAN Card, Passport, Driving License, Voter ID, any personal identity proof.
+  - Financial: Invoice, Receipt, Bill, Bank Statement, Payment Receipt, Transaction Slip, Salary Slip, Expense Voucher, Train Ticket, Railway Ticket, Metro Ticket, Bus Ticket, Flight Ticket, Travel Booking/Itinerary documents.
+  - Legal: Agreements, Contracts, Affidavits, Deeds, legal notices.
+  - Compliance: certificate of compliance, conformity certificate, ISO compliance certificate, CSA/FCC/CE compliance records, regulatory compliance forms.
+  - Tax: GSTR forms, GST returns/challans, Form 16, ITR acknowledgments, TDS/tax filing records.
+  - Business: Business registration, incorporation records, MSME/Udyam records, company profile/registration docs.
+  - Other: only when document clearly does not fit any category above.
 6. Suggest folder as Category/Document_Type.
-7. If the document is any compliance artifact (for example: certificate of compliance, conformity certificate, ISO compliance certificate, CSA/FCC/CE compliance records, regulatory compliance forms), category MUST be "Compliance" and folder MUST start with "Compliance/".
-8. Provide both "confidence" and "accuracy" as percentage between 0 and 100 (integer preferred). "accuracy" must represent this Vision analysis confidence.
-9. If content does NOT clearly fit Identity/Financial/Legal/Compliance/Tax/Business, set category to "Other" and keep a meaningful alternate name in "document_type" (example: "Coding Notes", "Study Notes", "General Notes").
+8. If the document is any compliance artifact (for example: certificate of compliance, conformity certificate, ISO compliance certificate, CSA/FCC/CE compliance records, regulatory compliance forms), category MUST be "Compliance" and folder MUST start with "Compliance/".
+9. Train/railway/travel ticket-like documents MUST be categorized as "Financial" and folder MUST start with "Financial/".
+10. Provide both "confidence" and "accuracy" as percentage between 0 and 100 (integer preferred). "accuracy" must represent this Vision analysis confidence.
+11. If content does NOT clearly fit Identity/Financial/Legal/Compliance/Tax/Business, set category to "Other" and keep a meaningful alternate name in "document_type" (example: "Coding Notes", "Study Notes", "General Notes").
 
 RULES:
 - NEVER return text outside JSON.
