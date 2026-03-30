@@ -8,18 +8,23 @@ import { BrutalCard } from "../brutal-card"
 const problems = [
   {
     icon: Clock,
-    title: "Time-Consuming",
-    description: "Hours spent manually entering data from bank statements into spreadsheets.",
+    title: "Manual document sorting is slow and inefficient",
+    description: "Teams waste time moving files between people and systems.",
   },
   {
     icon: AlertTriangle,
-    title: "Error-Prone",
-    description: "Manual data entry leads to mistakes that can cost you money and credibility.",
+    title: "High risk of human error in classification",
+    description: "Inconsistent tags and mistakes create rework and compliance risk.",
   },
   {
     icon: FileQuestion,
-    title: "Unstructured Data",
-    description: "PDFs and scans trap your data in formats that are hard to analyze or integrate.",
+    title: "Delays in compliance and processing workflows",
+    description: "Slow classification slows downstream processes and approvals.",
+  },
+  {
+    icon: FileQuestion,
+    title: "Difficulty handling large volumes of documents",
+    description: "Scaling manual processes becomes costly and fragile.",
   },
 ]
 
@@ -51,7 +56,7 @@ export function ProblemSection() {
           THE PROBLEM
         </motion.span>
         <h2 className="text-3xl md:text-4xl font-black text-balance">
-          Bank Statements Are a Nightmare to Process
+          Manual Document Sorting Slows Teams Down
         </h2>
       </div>
 

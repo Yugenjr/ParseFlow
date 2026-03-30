@@ -16,14 +16,14 @@ export function CTASection() {
         transition={{ duration: 0.5 }}
       >
         <h2 className="text-3xl md:text-4xl lg:text-5xl font-black text-primary-foreground mb-6 text-balance">
-          Stop reading statements.
+          Stop sorting documents manually.
           <br />
           <span className="bg-foreground text-background px-3 inline-block mt-2 -rotate-1">
-            Start understanding them.
+            Let AI do it instantly.
           </span>
         </h2>
         <p className="text-lg text-primary-foreground/80 mb-8 max-w-xl mx-auto">
-          Join thousands of businesses already saving hours every week with ParseFlow.
+          Automate document routing and compliance with a single upload.
         </p>
         <motion.div
           whileHover={{ scale: 1.02 }}
@@ -34,7 +34,7 @@ export function CTASection() {
             size="lg" 
             className="bg-foreground text-background hover:bg-background hover:text-foreground border-foreground"
           >
-            Upload Your Statement
+            Upload Document
             <ArrowRight className="w-5 h-5 ml-2 inline-block" />
           </BrutalButton>
         </motion.div>

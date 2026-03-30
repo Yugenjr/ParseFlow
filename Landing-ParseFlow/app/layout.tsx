@@ -12,23 +12,7 @@ export const metadata: Metadata = {
   title: 'ParseFlow - AI Bank Statement Data Extractor',
   description: 'Turn bank statements into smart insights with AI-powered data extraction. Save time, reduce errors, and get structured financial data in seconds.',
   generator: 'v0.app',
-  icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
-  },
+  // No icons: intentionally omitted to avoid showing a site logo/favicons in search results
 }
 
 export default function RootLayout({

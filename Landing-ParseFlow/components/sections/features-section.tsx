@@ -8,33 +8,33 @@ import { BrutalCard } from "../brutal-card"
 const features = [
   {
     icon: Zap,
-    title: "Lightning Fast",
-    description: "Process statements in seconds, not hours. Our AI works at machine speed.",
+    title: "Automatic document classification",
+    description: "AI labels documents without manual rules or tagging.",
   },
   {
     icon: Shield,
-    title: "99.9% Accuracy",
-    description: "Machine learning trained on millions of transactions for reliable extraction.",
+    title: "Supports PDFs and images",
+    description: "Works with scanned documents, photos, and native PDFs.",
   },
   {
     icon: Globe,
-    title: "Multi-Bank Support",
-    description: "Works with statements from any bank, anywhere in the world.",
+    title: "Fast AI-based prediction",
+    description: "Get classification results in seconds at scale.",
   },
   {
     icon: FileOutput,
-    title: "Flexible Export",
-    description: "Export to CSV, Excel, JSON, or connect directly via API.",
+    title: "Confidence score output",
+    description: "Each prediction includes a clear confidence percentage.",
   },
   {
     icon: RefreshCw,
-    title: "Auto-Categorization",
-    description: "Transactions are automatically categorized for instant insights.",
+    title: "Scalable API integration",
+    description: "Integrate classification into your workflows via API.",
   },
   {
     icon: Lock,
-    title: "Bank-Grade Security",
-    description: "Your data is encrypted end-to-end. We never store your statements.",
+    title: "Secure document handling",
+    description: "Encrypted transfer and safe processing of sensitive files.",
   },
 ]
 

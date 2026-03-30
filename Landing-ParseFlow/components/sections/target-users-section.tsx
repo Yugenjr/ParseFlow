@@ -7,23 +7,28 @@ import { SectionWrapper } from "../section-wrapper"
 const users = [
   {
     icon: Building2,
-    title: "Small Businesses",
-    description: "Streamline bookkeeping",
+    title: "Enterprises handling large document volumes",
+    description: "Scale classification across teams and locations",
   },
   {
     icon: Calculator,
-    title: "Accountants",
-    description: "Process client data faster",
+    title: "Financial institutions",
+    description: "Reduce manual review and speed processing",
   },
   {
     icon: Users,
-    title: "Finance Teams",
-    description: "Automate reconciliation",
+    title: "Legal and compliance teams",
+    description: "Quickly identify and route sensitive documents",
+  },
+  {
+    icon: Building2,
+    title: "Government and admin systems",
+    description: "Automate records handling and reduce backlog",
   },
   {
     icon: User,
-    title: "Individuals",
-    description: "Track personal spending",
+    title: "Businesses managing records",
+    description: "Keep document stores searchable and organized",
   },
 ]
 
