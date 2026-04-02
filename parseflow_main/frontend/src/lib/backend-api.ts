@@ -3,15 +3,16 @@ import axios from 'axios';
 export interface BackendDocument {
   _id: string;
   userId: string;
-  filename: string;
-  filePath: string;
-  fileUrl?: string;
-  document_type: string;
-  category: string;
+  fileName: string;
+  filename?: string;
+  fileUrl: string;
+  publicId: string;
+  document_type?: string;
+  category?: string;
   accuracy?: number;
   confidence: number;
   method: string;
-  metadata: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   extracted_text?: string;
   llm_analysis?: {
     summary?: string;
@@ -49,12 +50,8 @@ export interface BackendStats {
 
 interface UploadResponse {
   success: boolean;
-  document: BackendDocument;
-  result: Record<string, unknown>;
-  storage?: {
-    localPath?: string;
-    googleDriveUrl?: string | null;
-  };
+  file?: BackendDocument;
+  document?: BackendDocument;
 }
 
 export interface GoogleDriveStatus {
@@ -62,6 +59,29 @@ export interface GoogleDriveStatus {
 }
 
 const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
+
+function normalizeDocument(doc: Partial<BackendDocument>): BackendDocument {
+  const normalizedName = String(doc.fileName || doc.filename || 'Unnamed file');
+  return {
+    _id: String(doc._id || ''),
+    userId: String(doc.userId || ''),
+    fileName: normalizedName,
+    filename: normalizedName,
+    fileUrl: String(doc.fileUrl || ''),
+    publicId: String(doc.publicId || ''),
+    document_type: doc.document_type,
+    category: doc.category,
+    accuracy: doc.accuracy,
+    confidence: doc.confidence,
+    method: doc.method,
+    metadata: doc.metadata,
+    extracted_text: doc.extracted_text,
+    llm_analysis: doc.llm_analysis,
+    storage: doc.storage,
+    classification: doc.classification,
+    createdAt: String(doc.createdAt || new Date().toISOString()),
+  };
+}
 
 function buildAuthHeaders(token: string): Record<string, string> {
   return {
@@ -83,7 +103,10 @@ export async function uploadDocument(file: File, token: string, onProgress?: (pe
       onProgress(Math.max(1, Math.min(100, percent)));
     }
   });
-  return resp.data as UploadResponse;
+  const data = resp.data as UploadResponse;
+  if (data.file) data.file = normalizeDocument(data.file);
+  if (data.document) data.document = normalizeDocument(data.document);
+  return data;
 }
 
 export async function uploadDocumentToFolder(file: File, folder: string, token: string): Promise<UploadResponse> {
@@ -91,17 +114,21 @@ export async function uploadDocumentToFolder(file: File, folder: string, token: 
   formData.append('file', file);
   formData.append('folder', folder);
 
-  const resp = await axios.post(`${backendBaseUrl}/api/folders/upload`, formData, {
+  const resp = await axios.post(`${backendBaseUrl}/upload`, formData, {
     headers: buildAuthHeaders(token)
   });
-  return resp.data as UploadResponse;
+  const data = resp.data as UploadResponse;
+  if (data.file) data.file = normalizeDocument(data.file);
+  if (data.document) data.document = normalizeDocument(data.document);
+  return data;
 }
 
 export async function fetchUserDocuments(token: string): Promise<BackendDocument[]> {
-  const resp = await axios.get(`${backendBaseUrl}/documents`, {
+  const resp = await axios.get(`${backendBaseUrl}/files`, {
     headers: buildAuthHeaders(token)
   });
-  return Array.isArray(resp.data) ? (resp.data as BackendDocument[]) : [];
+  if (!Array.isArray(resp.data)) return [];
+  return (resp.data as Partial<BackendDocument>[]).map((doc) => normalizeDocument(doc));
 }
 
 export async function deleteUserDocument(documentId: string, token: string): Promise<void> {
@@ -111,16 +138,10 @@ export async function deleteUserDocument(documentId: string, token: string): Pro
   }
 
   try {
-    await axios.delete(`${backendBaseUrl}/api/documents/${encodedId}`, {
+    await axios.delete(`${backendBaseUrl}/files/${encodedId}`, {
       headers: buildAuthHeaders(token)
     });
   } catch (err) {
-    if (axios.isAxiosError(err) && err.response?.status === 404) {
-      await axios.delete(`${backendBaseUrl}/documents/${encodedId}`, {
-        headers: buildAuthHeaders(token)
-      });
-      return;
-    }
     if (axios.isAxiosError(err)) {
       throw new Error(String(err.response?.data?.error || err.message || 'Delete failed'));
     }

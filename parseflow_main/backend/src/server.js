@@ -1,10 +1,10 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const express = require('express');
 const multer = require('multer');
 const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const { createClerkClient } = require('@clerk/backend');
 const { connectDB } = require('./config/db');
@@ -22,6 +22,7 @@ const { createNotification } = require('./services/notificationService');
 const { sendEmail } = require('./services/emailService');
 const { createGoogleAuthUrl, getOAuthClient, uploadToDrive } = require('./services/driveService');
 const notificationRoutes = require('./routes/notifications');
+const fileRoutes = require('./routes/files');
 const { startWeeklySummaryJob } = require('./cron/weeklySummary');
 
 const app = express();
@@ -52,45 +53,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
+app.use(fileRoutes);
 const STORAGE_ROOT = path.resolve(path.join(__dirname, '..', '..', 'storage'));
-
-app.get('/files/:userId/:category/:docType/:filename', (req, res, next) => {
-  const hasAuthHeaders = Boolean(req.headers.authorization || req.headers['x-user-id']);
-  if (!hasAuthHeaders) {
-    // Backward compatibility: if no auth headers are present, continue to static file serving.
-    return next();
-  }
-
-  return authMiddleware(req, res, () => {
-    try {
-      if (req.params.userId !== req.userId) {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-
-      const secureFilePath = path.resolve(path.join(
-        STORAGE_ROOT,
-        req.params.userId,
-        req.params.category,
-        req.params.docType,
-        req.params.filename
-      ));
-
-      if (!secureFilePath.startsWith(path.join(STORAGE_ROOT, req.params.userId))) {
-        return res.status(400).json({ error: 'Invalid file path' });
-      }
-
-      if (!fs.existsSync(secureFilePath)) {
-        return res.status(404).json({ error: 'File not found' });
-      }
-
-      return res.sendFile(secureFilePath);
-    } catch (err) {
-      return res.status(500).json({ error: 'File access failed' });
-    }
-  });
-});
-
-app.use('/files', express.static(STORAGE_ROOT));
 
 // Store uploads in backend/uploads (one level above src)
 const UPLOADS_DIR = path.resolve(path.join(__dirname, '..', 'uploads'));

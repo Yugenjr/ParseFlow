@@ -136,8 +136,10 @@ export default function DocumentsPage() {
 
   const openDoc = (doc: BackendDocument) => {
     if (!doc.fileUrl) return;
-    const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
-    window.open(`${backendBaseUrl}${doc.fileUrl}`, '_blank');
+    const targetUrl = /^https?:\/\//i.test(doc.fileUrl)
+      ? doc.fileUrl
+      : `${import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000'}${doc.fileUrl}`;
+    window.open(targetUrl, '_blank');
   };
 
   const normalizeFolderInput = (value: string) => {
@@ -207,8 +209,9 @@ export default function DocumentsPage() {
       if (!token) throw new Error('Authentication token missing. Please sign in again.');
 
       const response = await uploadDocumentToFolder(file, folderUploadTarget, token);
-      if (response && response.document) {
-        setDocs((prev) => [response.document, ...prev]);
+      const uploaded = response.file || response.document;
+      if (uploaded) {
+        setDocs((prev) => [uploaded, ...prev]);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to upload into folder. Please try again.';
@@ -302,7 +305,7 @@ export default function DocumentsPage() {
                           <FileText className="h-5 w-5 text-primary" strokeWidth={1.8} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-body text-sm font-medium text-foreground truncate">{doc.filename}</p>
+                          <p className="font-body text-sm font-medium text-foreground truncate">{doc.fileName}</p>
                           <p className="font-mono text-[10px] text-muted-foreground">{new Date(doc.createdAt).toLocaleDateString()}</p>
                         </div>
                         <span className="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-secondary text-primary uppercase">
@@ -345,7 +348,7 @@ export default function DocumentsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete {deleteTarget?.filename || 'this document'}.
+              This will permanently delete {deleteTarget?.fileName || 'this document'}.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

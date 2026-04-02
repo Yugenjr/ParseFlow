@@ -91,7 +91,7 @@ export default function HistoryPage() {
       if (!searchTerm) return true;
       const category = getCategory(d).toLowerCase();
       const docType = String(d.document_type || d.storage?.docType || "").toLowerCase();
-      const filename = d.filename.toLowerCase();
+      const filename = d.fileName.toLowerCase();
       return (
         filename.includes(searchTerm) ||
         category.includes(searchTerm) ||
@@ -101,8 +101,10 @@ export default function HistoryPage() {
 
   const openDoc = (doc: BackendDocument) => {
     if (!doc.fileUrl) return;
-    const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
-    window.open(`${backendBaseUrl}${doc.fileUrl}`, '_blank');
+    const targetUrl = /^https?:\/\//i.test(doc.fileUrl)
+      ? doc.fileUrl
+      : `${import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000'}${doc.fileUrl}`;
+    window.open(targetUrl, '_blank');
   };
 
   const confirmDeleteDocument = async () => {
@@ -175,7 +177,7 @@ export default function HistoryPage() {
                 📄
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-body text-sm font-medium text-foreground truncate">{item.filename}</p>
+                <p className="font-body text-sm font-medium text-foreground truncate">{item.fileName}</p>
                 <p className="font-mono text-[10px] text-muted-foreground">
                   {getCategory(item)} · Uploaded {formatUploadedAt(item.createdAt)}
                 </p>
@@ -228,7 +230,7 @@ export default function HistoryPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete {deleteTarget?.filename || 'this document'}.
+              This will permanently delete {deleteTarget?.fileName || 'this document'}.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
