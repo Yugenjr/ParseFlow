@@ -58,7 +58,7 @@ export interface GoogleDriveStatus {
   connected: boolean;
 }
 
-const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
+const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || '/api-proxy';
 
 function normalizeDocument(doc: Partial<BackendDocument>): BackendDocument {
   const normalizedName = String(doc.fileName || doc.filename || 'Unnamed file');

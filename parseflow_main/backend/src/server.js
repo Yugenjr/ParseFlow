@@ -26,6 +26,7 @@ const fileRoutes = require('./routes/files');
 const { startWeeklySummaryJob } = require('./cron/weeklySummary');
 
 const app = express();
+console.log("ENV TEST:", process.env.CLOUD_NAME);
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -118,7 +119,8 @@ async function safeMoveFile(src, dest) {
   }
 }
 
-const ML_SERVICE_URL = 'http://127.0.0.1:8001/predict';
+const ML_SERVICE_BASE_URL = (process.env.ML_API_URL || 'http://ml:8001').replace(/\/+$/, '');
+const ML_SERVICE_URL = `${ML_SERVICE_BASE_URL}/predict`;
 const STORAGE_LIMIT_MB = 20;
 const STORAGE_ALERTS = [
   { threshold: 70, message: 'You have used 70% of your storage' },
@@ -1621,8 +1623,10 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
   }
 });
 
-app.listen(5000, () => {
-  console.log('Backend running on port 5000');
+const PORT = Number(process.env.PORT || 5000);
+
+app.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
   startWeeklySummaryJob();
   connectDB()
     .then(() => backfillClerkUsersToMongo())

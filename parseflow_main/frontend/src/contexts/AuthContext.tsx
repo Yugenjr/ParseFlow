@@ -31,7 +31,7 @@ async function getReliableClerkToken(getToken: ReturnType<typeof useClerkAuth>["
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn, user: clerkUser } = useUser();
   const { getToken, signOut } = useClerkAuth();
-  const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000';
+  const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || '/api-proxy';
 
   const user = useMemo<User | null>(() => {
     if (!isSignedIn || !clerkUser) return null;

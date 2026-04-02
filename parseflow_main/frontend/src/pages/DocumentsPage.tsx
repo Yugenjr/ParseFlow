@@ -138,7 +138,7 @@ export default function DocumentsPage() {
     if (!doc.fileUrl) return;
     const targetUrl = /^https?:\/\//i.test(doc.fileUrl)
       ? doc.fileUrl
-      : `${import.meta.env.VITE_BACKEND_URL || 'http://10.0.111.131:5000'}${doc.fileUrl}`;
+      : `${import.meta.env.VITE_BACKEND_URL || '/api-proxy'}${doc.fileUrl}`;
     window.open(targetUrl, '_blank');
   };
 
