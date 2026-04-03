@@ -3,10 +3,13 @@ services:
     build:
       context: ./ml-service
       dockerfile: Dockerfile
+    env_file:
+      - ./ml-service/.env.docker
     ports:
       - "8001:8001"
-    environment:
-      PORT: 8001
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./storage:/app/storage
 
   backend:
     build:
@@ -16,11 +19,9 @@ services:
       - ml
     env_file:
       - ./backend/.env
-    environment:
-      PORT: 5000
-      ML_API_URL: http://ml:8001
+      - ./backend/.env.docker
     ports:
-      - "5000:5000"
+      - "5001:5000"
     volumes:
       - ./storage:/app/storage
       - ./backend/uploads:/app/backend/uploads
@@ -33,7 +34,6 @@ services:
       - backend
     env_file:
       - ./frontend/.env
-    environment:
-      VITE_API_URL: http://backend:5000
+      - ./frontend/.env.docker
     ports:
       - "3000:3000"

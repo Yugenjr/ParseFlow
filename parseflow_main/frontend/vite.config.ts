@@ -8,6 +8,36 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       host: true,
+      proxy: {
+        '/api': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/upload': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/files': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/notifications': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/documents': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/docbot': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/auth': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+      },
     },
     plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
     resolve: {
