@@ -31,6 +31,17 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+function resolveDocumentUrl(fileUrl: string): string {
+  if (/^https?:\/\//i.test(fileUrl)) return fileUrl;
+  return `${import.meta.env.VITE_API_URL}${fileUrl}`;
+}
+
+function openDocumentViewer(doc: BackendDocument) {
+  if (!doc.fileUrl) return;
+  const sourceUrl = resolveDocumentUrl(doc.fileUrl);
+  window.open(sourceUrl, '_blank', 'noopener,noreferrer');
+}
+
 const CUSTOM_FOLDERS_KEY = "parseflow_custom_folders";
 
 const categoryConfig: Record<string, { icon: LucideIcon; color: string }> = {
@@ -133,14 +144,6 @@ export default function DocumentsPage() {
   });
 
   const sortedFolders = Object.entries(folderGroups).sort((a, b) => a[0].localeCompare(b[0]));
-
-  const openDoc = (doc: BackendDocument) => {
-    if (!doc.fileUrl) return;
-    const targetUrl = /^https?:\/\//i.test(doc.fileUrl)
-      ? doc.fileUrl
-      : `${import.meta.env.VITE_BACKEND_URL || '/api-proxy'}${doc.fileUrl}`;
-    window.open(targetUrl, '_blank');
-  };
 
   const normalizeFolderInput = (value: string) => {
     const cleaned = value
@@ -298,7 +301,7 @@ export default function DocumentsPage() {
                     folderDocs.map((doc) => (
                       <div
                         key={doc._id}
-                        onClick={() => openDoc(doc)}
+                        onClick={() => openDocumentViewer(doc)}
                         className={`card-brutal card-brutal-hover flex items-center gap-4 border-l-4 ${categoryConfig[getCategory(doc)]?.color || ''} ${doc.fileUrl ? 'cursor-pointer' : ''}`}
                       >
                         <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0">

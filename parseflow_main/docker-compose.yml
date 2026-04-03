@@ -31,10 +31,9 @@ services:
       dockerfile: Dockerfile
     depends_on:
       - backend
+    env_file:
+      - ./frontend/.env
     environment:
-      VITE_BACKEND_URL: /api-proxy
-      VITE_BACKEND_PROXY_TARGET: http://backend:5000
-      VITE_HMR_HOST: localhost
-      VITE_HMR_PORT: 3000
+      VITE_API_URL: http://backend:5000
     ports:
       - "3000:3000"

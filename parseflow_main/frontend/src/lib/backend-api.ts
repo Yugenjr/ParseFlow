@@ -58,7 +58,7 @@ export interface GoogleDriveStatus {
   connected: boolean;
 }
 
-const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || '/api-proxy';
+const backendBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 function normalizeDocument(doc: Partial<BackendDocument>): BackendDocument {
   const normalizedName = String(doc.fileName || doc.filename || 'Unnamed file');
@@ -114,7 +114,7 @@ export async function uploadDocumentToFolder(file: File, folder: string, token: 
   formData.append('file', file);
   formData.append('folder', folder);
 
-  const resp = await axios.post(`${backendBaseUrl}/upload`, formData, {
+  const resp = await axios.post(`${backendBaseUrl}/api/folders/upload`, formData, {
     headers: buildAuthHeaders(token)
   });
   const data = resp.data as UploadResponse;
@@ -124,7 +124,7 @@ export async function uploadDocumentToFolder(file: File, folder: string, token: 
 }
 
 export async function fetchUserDocuments(token: string): Promise<BackendDocument[]> {
-  const resp = await axios.get(`${backendBaseUrl}/files`, {
+  const resp = await axios.get(`${backendBaseUrl}/documents`, {
     headers: buildAuthHeaders(token)
   });
   if (!Array.isArray(resp.data)) return [];

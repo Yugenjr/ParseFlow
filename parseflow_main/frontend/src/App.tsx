@@ -85,6 +85,10 @@ function VaultLoadingScreen() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  useEffect(() => {
+    console.log('[Route] ProtectedRoute render state', { loading, hasUser: Boolean(user), userId: user?.id });
+  }, [loading, user]);
+
   if (loading) return <VaultLoadingScreen />;
   if (!user) {
     const search = typeof window !== "undefined" ? window.location.search : "";
@@ -96,6 +100,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function AuthRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  useEffect(() => {
+    console.log('[Route] AuthRoute render state', { loading, hasUser: Boolean(user), userId: user?.id });
+  }, [loading, user]);
+
   if (loading) return <VaultLoadingScreen />;
   if (user) return <Navigate to="/" replace />;
   return <>{children}</>;

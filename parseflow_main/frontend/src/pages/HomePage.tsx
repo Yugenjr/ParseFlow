@@ -28,10 +28,21 @@ export default function HomePage() {
   const [queryCount, setQueryCount] = useState(0);
 
   useEffect(() => {
+    console.log('[HomePage] render state', {
+      hasUser: Boolean(user),
+      userId: user?.id,
+      docCount: docs.length,
+      avgTimeSec,
+      queryCount,
+    });
+  }, [avgTimeSec, docs.length, queryCount, user]);
+
+  useEffect(() => {
     const load = async () => {
       if (!user) return;
       const token = await getAuthToken();
       if (!token) return;
+      console.log('Calling API...', { page: 'HomePage', endpoints: ['/files', '/api/stats'] });
       const [backendDocs, stats] = await Promise.all([
         fetchUserDocuments(token),
         fetchDashboardStats(token)

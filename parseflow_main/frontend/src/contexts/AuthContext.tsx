@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useMemo, useEffect, useCallback, useState } from 'react';
 import { useAuth as useClerkAuth, useUser } from '@clerk/react';
 import type { User } from '@/lib/indexeddb';
 
@@ -31,7 +31,33 @@ async function getReliableClerkToken(getToken: ReturnType<typeof useClerkAuth>["
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn, user: clerkUser } = useUser();
   const { getToken, signOut } = useClerkAuth();
-  const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || '/api-proxy';
+  const backendBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const [authBootstrapTimedOut, setAuthBootstrapTimedOut] = useState(false);
+
+  useEffect(() => {
+    console.log('[Auth] state', {
+      isLoaded,
+      isSignedIn,
+      hasUser: Boolean(clerkUser),
+      userId: clerkUser?.id,
+      backendBaseUrl,
+      clerkKeyPresent: Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY),
+    });
+  }, [backendBaseUrl, clerkUser, isLoaded, isSignedIn]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      setAuthBootstrapTimedOut(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      console.warn('[Auth] Clerk has not loaded in time; allowing the app to render with fallback routing.');
+      setAuthBootstrapTimedOut(true);
+    }, 8000);
+
+    return () => window.clearTimeout(timer);
+  }, [isLoaded]);
 
   const user = useMemo<User | null>(() => {
     if (!isSignedIn || !clerkUser) return null;
@@ -48,6 +74,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!isSignedIn) return;
     const token = await getReliableClerkToken(getToken);
     if (!token) return;
+
+    console.log('[Auth] Calling API...', { endpoint: '/api/auth/sync-user' });
 
     const resp = await fetch(`${backendBaseUrl}/api/auth/sync-user`, {
       method: 'POST',
@@ -82,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signOut();
   }, [signOut]);
 
-  const loading = !isLoaded;
+  const loading = !isLoaded && !authBootstrapTimedOut;
 
   return (
     <AuthContext.Provider value={{ user, loading, logout, syncUser, getAuthToken }}>

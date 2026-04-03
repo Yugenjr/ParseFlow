@@ -5,7 +5,8 @@ const { uploadFile, fetchFiles, deleteFile } = require('../controllers/fileContr
 
 const router = express.Router();
 
-router.post('/upload', authMiddleware, (req, res, next) => {
+// Keep legacy direct-cloudinary upload route, but avoid colliding with main /upload ML pipeline.
+router.post('/upload-cloudinary', authMiddleware, (req, res, next) => {
 	upload.single('file')(req, res, (err) => {
 		if (!err) {
 			next();

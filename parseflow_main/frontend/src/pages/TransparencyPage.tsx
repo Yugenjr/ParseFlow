@@ -38,10 +38,20 @@ export default function TransparencyPage() {
   const [stats, setStats] = useState<BackendStats>({ avgProcessingTimeSec: 0, queryCount: 0 });
 
   useEffect(() => {
+    console.log('[TransparencyPage] render state', {
+      loading,
+      documentCount: documents.length,
+      queryCount: stats.queryCount,
+    });
+  }, [documents.length, loading, stats.queryCount]);
+
+  useEffect(() => {
     const loadData = async () => {
       try {
         const token = await getToken();
         if (!token) return;
+
+        console.log('Calling API...', { page: 'TransparencyPage', endpoints: ['/files', '/api/stats'] });
 
         const [docs, dashboardStats] = await Promise.all([
           fetchUserDocuments(token),

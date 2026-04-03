@@ -19,6 +19,17 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+function resolveDocumentUrl(fileUrl: string): string {
+  if (/^https?:\/\//i.test(fileUrl)) return fileUrl;
+  return `${import.meta.env.VITE_API_URL}${fileUrl}`;
+}
+
+function openDocumentViewer(doc: BackendDocument) {
+  if (!doc.fileUrl) return;
+  const sourceUrl = resolveDocumentUrl(doc.fileUrl);
+  window.open(sourceUrl, '_blank', 'noopener,noreferrer');
+}
+
 function formatUploadedAt(ts: string): string {
   const when = new Date(ts);
   if (Number.isNaN(when.getTime())) return 'time unavailable';
@@ -99,14 +110,6 @@ export default function HistoryPage() {
       );
     });
 
-  const openDoc = (doc: BackendDocument) => {
-    if (!doc.fileUrl) return;
-    const targetUrl = /^https?:\/\//i.test(doc.fileUrl)
-      ? doc.fileUrl
-      : `${import.meta.env.VITE_BACKEND_URL || '/api-proxy'}${doc.fileUrl}`;
-    window.open(targetUrl, '_blank');
-  };
-
   const confirmDeleteDocument = async () => {
     if (!deleteTarget) return;
 
@@ -170,7 +173,7 @@ export default function HistoryPage() {
             return (
             <div
               key={item._id}
-              onClick={() => openDoc(item)}
+              onClick={() => openDocumentViewer(item)}
               className={`card-brutal card-brutal-hover flex items-center gap-4 ${item.fileUrl ? 'cursor-pointer' : ''}`}
             >
               <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center shrink-0 text-lg">
