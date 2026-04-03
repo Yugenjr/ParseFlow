@@ -10,12 +10,22 @@ app = Flask(__name__)
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        data = request.get_json(force=True)
+        # More defensive JSON parsing with detailed logging
+        try:
+            data = request.get_json(force=True)
+        except Exception as json_err:
+            print(f"[ML Service] JSON parse error: {json_err}")
+            print(f"[ML Service] Raw body: {request.data}")
+            return jsonify({'error': f'Invalid JSON: {str(json_err)}'}), 400
+            
         file_path = data.get('file_path')
         debug = bool(data.get('debug', False))
         if not file_path:
             return jsonify({'error': 'file_path required'}), 400
 
+        # Normalize Windows paths (convert backslashes to forward slashes)
+        file_path = file_path.replace('\\', '/')
+        
         # Accept absolute or relative paths
         if not os.path.isabs(file_path):
             file_path = os.path.abspath(file_path)
@@ -63,5 +73,4 @@ def predict():
 
 
 if __name__ == '__main__':
-    # Run on 127.0.0.1:8001
-    app.run(host='127.0.0.1', port=8001)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8001)))

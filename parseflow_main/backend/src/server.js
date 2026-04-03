@@ -1,10 +1,10 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const express = require('express');
 const multer = require('multer');
 const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const { createClerkClient } = require('@clerk/backend');
 const { connectDB } = require('./config/db');
@@ -15,6 +15,7 @@ const Notification = require('./models/Notification');
 const authMiddleware = require('./middleware/authMiddleware');
 const { encrypt } = require('./utils/encryption');
 const { generateFileHash } = require('./utils/hash');
+const { uploadFileToCloudinary } = require('./utils/cloudinaryUpload');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
 const { askGuideBot } = require('./services/guidebotService');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
@@ -22,6 +23,7 @@ const { createNotification } = require('./services/notificationService');
 const { sendEmail } = require('./services/emailService');
 const { createGoogleAuthUrl, getOAuthClient, uploadToDrive } = require('./services/driveService');
 const notificationRoutes = require('./routes/notifications');
+const fileRoutes = require('./routes/files');
 const { startWeeklySummaryJob } = require('./cron/weeklySummary');
 
 const app = express();
@@ -49,47 +51,14 @@ const corsOptions = {
   credentials: true,
 };
 
+const STORAGE_ROOT = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
-const STORAGE_ROOT = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+app.use(fileRoutes);
 
-app.get('/files/:userId/:category/:docType/:filename', (req, res, next) => {
-  const hasAuthHeaders = Boolean(req.headers.authorization || req.headers['x-user-id']);
-  if (!hasAuthHeaders) {
-    // Backward compatibility: if no auth headers are present, continue to static file serving.
-    return next();
-  }
-
-  return authMiddleware(req, res, () => {
-    try {
-      if (req.params.userId !== req.userId) {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-
-      const secureFilePath = path.resolve(path.join(
-        STORAGE_ROOT,
-        req.params.userId,
-        req.params.category,
-        req.params.docType,
-        req.params.filename
-      ));
-
-      if (!secureFilePath.startsWith(path.join(STORAGE_ROOT, req.params.userId))) {
-        return res.status(400).json({ error: 'Invalid file path' });
-      }
-
-      if (!fs.existsSync(secureFilePath)) {
-        return res.status(404).json({ error: 'File not found' });
-      }
-
-      return res.sendFile(secureFilePath);
-    } catch (err) {
-      return res.status(500).json({ error: 'File access failed' });
-    }
-  });
-});
-
+// Serve files from storage directory for fallback local file access
 app.use('/files', express.static(STORAGE_ROOT));
 
 // Store uploads in backend/uploads (one level above src)
@@ -154,7 +123,10 @@ async function safeMoveFile(src, dest) {
   }
 }
 
-const ML_SERVICE_URL = 'http://127.0.0.1:8001/predict';
+const ML_SERVICE_BASE_URL = (process.env.ML_API_URL || 'http://localhost:8001').replace(/\/+$/, '');
+const ML_SERVICE_URLS = ML_SERVICE_BASE_URL.endsWith('/predict')
+  ? [ML_SERVICE_BASE_URL]
+  : [`${ML_SERVICE_BASE_URL}/predict`, ML_SERVICE_BASE_URL];
 const STORAGE_LIMIT_MB = 20;
 const STORAGE_ALERTS = [
   { threshold: 70, message: 'You have used 70% of your storage' },
@@ -171,6 +143,39 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://10.0.111.131:5173';
 const GOOGLE_OAUTH_STATE_SECRET = process.env.GOOGLE_OAUTH_STATE_SECRET || process.env.CLERK_SECRET_KEY || 'parseflow-google-state-dev-secret';
 
 console.log('USING CLIENT:', process.env.GOOGLE_CLIENT_ID);
+console.log('ML endpoints configured:', ML_SERVICE_URLS);
+
+async function callMlService(filePath) {
+  let lastError = null;
+  for (const url of ML_SERVICE_URLS) {
+    try {
+      console.log('Calling ML service at:', url, 'with file:', filePath);
+      
+      // Final verification: ensure file exists and is readable
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.size === 0) {
+          throw new Error('File size is 0 - file may not have been fully written');
+        }
+        console.log('ML: File exists and has size:', stats.size);
+      } catch (checkErr) {
+        console.error('ML: File check failed before posting:', checkErr.message);
+        throw checkErr;
+      }
+
+      const resp = await axios.post(
+        url,
+        { file_path: filePath },
+        { timeout: 30000 }
+      );
+      return { response: resp, endpoint: url };
+    } catch (err) {
+      lastError = err;
+      console.error('ML attempt failed for endpoint', url, err?.response?.data || err.message || err);
+    }
+  }
+  throw lastError || new Error('All ML endpoint attempts failed');
+}
 
 function normalizeConfidencePercent(value) {
   if (value === null || value === undefined) return 0;
@@ -352,11 +357,18 @@ async function maybeSyncDocumentToGoogleDrive({ req, savedDoc, category, docType
     });
 
     savedDoc.storage = savedDoc.storage || {};
+    // Preserve the Cloudinary URL
+    const cloudinaryUrl = savedDoc.storage.fileUrl;
     savedDoc.storage.googleDrive = {
       fileId: synced.fileId,
       fileUrl: synced.fileUrl,
     };
     savedDoc.storage.googleDriveUrl = synced.fileUrl || null;
+    // Restore Cloudinary URL if it was set
+    if (cloudinaryUrl && /^https?:\/\//.test(cloudinaryUrl)) {
+      savedDoc.storage.fileUrl = cloudinaryUrl;
+    }
+    savedDoc.markModified('storage');
     await savedDoc.save();
 
     return synced;
@@ -375,7 +387,7 @@ function buildUploadSuccessResponse({ savedDoc, result }) {
 
   return {
     success: true,
-    document: { ...docObj, fileUrl: makeFileUrl(savedDoc.filePath) },
+    document: { ...docObj, fileUrl: getFileUrl(savedDoc) },
     result,
     storage: {
       localPath,
@@ -503,6 +515,15 @@ function createStorageTarget({ userId, result, filename }) {
 function makeFileUrl(filePathAbs) {
   const relative = path.relative(STORAGE_ROOT, filePathAbs).split(path.sep).join('/');
   return `/files/${relative}`;
+}
+
+function getFileUrl(doc) {
+  // Prefer Cloudinary URL if available, otherwise fall back to local file URL
+  if (doc.storage && doc.storage.fileUrl && /^https?:\/\//.test(doc.storage.fileUrl)) {
+    return doc.storage.fileUrl;
+  }
+  // Fall back to local file URL
+  return makeFileUrl(doc.filePath);
 }
 
 function listFilesRecursive(rootDir) {
@@ -777,9 +798,71 @@ async function resolveUserEmail(userId, tokenEmail) {
 }
 
 async function persistAndNotify({ req, result, filePath }) {
+  console.log('\n=== persistAndNotify START ===');
+  console.log('File path:', filePath);
+  console.log('Result:', result);
+  
   const savedDoc = await persistDocumentForUser({ req, result, filePath });
+  console.log('Document created with ID:', savedDoc._id);
+  console.log('Initial storage.fileUrl:', savedDoc.storage?.fileUrl);
+  
   const category = deriveCategory(result);
   const storageDocType = (savedDoc.storage && savedDoc.storage.docType) || deriveDocType(result).replace(/\s+/g, '_');
+
+  console.log('Category:', category);
+  console.log('StorageDocType:', storageDocType);
+
+  // Upload file to Cloudinary and update the document with the Cloudinary URL
+  let cloudinaryUrl = null;
+  try {
+    console.log('\n--- Starting Cloudinary upload ---');
+    console.log('Uploading file to Cloudinary:', filePath);
+    const cloudinaryFolder = `users/${req.userId}/${category}/${storageDocType}`;
+    console.log('Cloudinary folder:', cloudinaryFolder);
+    
+    const cloudinaryResult = await uploadFileToCloudinary({
+      filePath,
+      folder: cloudinaryFolder,
+      originalFilename: savedDoc.filename
+    });
+    
+    console.log('Cloudinary result:', cloudinaryResult);
+    
+    if (cloudinaryResult && cloudinaryResult.secure_url) {
+      cloudinaryUrl = cloudinaryResult.secure_url;
+      console.log('✓ File uploaded to Cloudinary successfully:', cloudinaryUrl);
+
+      // Update the document with the Cloudinary URL using explicit field assignment
+      if (!savedDoc.storage) {
+        savedDoc.storage = {};
+      }
+      console.log('Before update - savedDoc.storage.fileUrl:', savedDoc.storage.fileUrl);
+      
+      savedDoc.storage.fileUrl = cloudinaryUrl;
+      savedDoc.storage.cloudinaryPublicId = cloudinaryResult.public_id;
+      
+      console.log('After assignment - savedDoc.storage.fileUrl:', savedDoc.storage.fileUrl);
+      
+      // Mark the storage field as modified for Mongoose
+      savedDoc.markModified('storage');
+      console.log('Marked storage as modified');
+      
+      await savedDoc.save();
+      console.log('✓ Document saved');
+      console.log('After save - savedDoc.storage.fileUrl:', savedDoc.storage.fileUrl);
+      console.log('✓ Document updated with Cloudinary URL:', savedDoc._id, 'URL:', savedDoc.storage.fileUrl);
+    } else {
+      console.log('Cloudinary not configured or returned null, using local storage URL');
+    }
+  } catch (cloudinaryErr) {
+    console.error('❌ Cloudinary upload failed (non-blocking):', cloudinaryErr && (cloudinaryErr.message || cloudinaryErr));
+    console.error('Stack:', cloudinaryErr && cloudinaryErr.stack);
+    // Continue with local storage URL if Cloudinary upload fails
+    // The local file is already in storage, so the document is still accessible
+  }
+
+  console.log('\n--- Before Google Drive sync ---');
+  console.log('Final savedDoc.storage.fileUrl before Google Drive:', savedDoc.storage?.fileUrl);
 
   await maybeSyncDocumentToGoogleDrive({
     req,
@@ -787,6 +870,9 @@ async function persistAndNotify({ req, result, filePath }) {
     category,
     docType: storageDocType,
   });
+
+  console.log('--- After Google Drive sync ---');
+  console.log('Final savedDoc.storage.fileUrl after Google Drive:', savedDoc.storage?.fileUrl);
 
   try {
     const docType = deriveDocType(result);
@@ -806,7 +892,13 @@ async function persistAndNotify({ req, result, filePath }) {
     console.error('Notification flow failed:', notifyErr && (notifyErr.message || notifyErr));
   }
 
-  return savedDoc;
+  // Reload document from DB to get latest state with all updates
+  console.log('\n--- Reloading document from DB ---');
+  const finalDoc = await Document.findById(savedDoc._id);
+  console.log('Final doc storage.fileUrl after reload:', finalDoc?.storage?.fileUrl);
+  console.log('=== persistAndNotify END ===\n');
+  
+  return finalDoc || savedDoc;
 }
 
 app.use('/notifications', notificationRoutes);
@@ -1091,12 +1183,56 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
         accuracy: normalizeConfidencePercent(doc.classification && (doc.classification.accuracy ?? doc.classification.confidence)),
         confidence: normalizeConfidencePercent(doc.classification && doc.classification.confidence)
       },
-      fileUrl: makeFileUrl(doc.filePath)
+      fileUrl: getFileUrl(doc)
     }));
 
     return res.json({ documents: hydrated });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Failed to fetch documents' });
+  }
+});
+
+app.get('/api/documents/preview', authMiddleware, async (req, res) => {
+  try {
+    const rawUrl = String(req.query.url || '').trim();
+    if (!rawUrl) {
+      return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    let targetUrl;
+    try {
+      targetUrl = new URL(rawUrl);
+    } catch {
+      return res.status(400).json({ error: 'Invalid url parameter' });
+    }
+
+    const allowedHosts = new Set([
+      'res.cloudinary.com',
+      'localhost',
+      '127.0.0.1',
+      '10.0.111.131',
+    ]);
+    if (!allowedHosts.has(targetUrl.hostname)) {
+      return res.status(400).json({ error: 'Unsupported preview host' });
+    }
+
+    const upstream = await axios.get(targetUrl.toString(), { responseType: 'stream' });
+    res.setHeader('Content-Type', upstream.headers['content-type'] || 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'no-store');
+
+    upstream.data.on('error', (streamErr) => {
+      console.error('Preview stream error:', streamErr && (streamErr.message || streamErr));
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to stream preview' });
+      } else {
+        res.destroy(streamErr);
+      }
+    });
+
+    upstream.data.pipe(res);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to preview document' });
   }
 });
 
@@ -1115,7 +1251,7 @@ app.get('/documents', authMiddleware, async (req, res) => {
         accuracy: normalizeConfidencePercent(doc.classification && (doc.classification.accuracy ?? doc.classification.confidence)),
         confidence: normalizeConfidencePercent(doc.classification && doc.classification.confidence)
       },
-      fileUrl: makeFileUrl(doc.filePath)
+      fileUrl: getFileUrl(doc)
     }));
 
     return res.json(hydrated);
@@ -1238,6 +1374,19 @@ app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (re
     const targetPath = path.join(targetDir, req.file.originalname);
     await safeMoveFile(originalPath, targetPath);
 
+    // Verify file was moved successfully and has content
+    try {
+      const fileStats = fs.statSync(targetPath);
+      if (fileStats.size === 0) {
+        console.error('Folder upload resulted in empty file:', targetPath);
+        return res.status(400).json({ error: 'File is empty after upload. Please try again.' });
+      }
+      console.log('Folder upload file verified: size =', fileStats.size, 'bytes');
+    } catch (validateErr) {
+      console.error('Folder upload file validation error:', validateErr && (validateErr.message || validateErr));
+      return res.status(400).json({ error: 'File validation failed. Please try again.' });
+    }
+
     const category = folderParts[0] || 'Other';
     const docTypePath = folderParts.slice(1).join('/');
     const docTypeLeaf = folderParts[folderParts.length - 1] || 'Manual Upload';
@@ -1313,6 +1462,36 @@ app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (re
       console.error('Manual upload notification flow failed:', notifyErr && (notifyErr.message || notifyErr));
     }
 
+    // Upload file to Cloudinary for manual uploads as well
+    let cloudinaryUrl = null;
+    try {
+      console.log('Uploading manually uploaded file to Cloudinary:', targetPath);
+      const cloudinaryFolder = `users/${req.userId}/${category}/${docTypeLeaf}`;
+      const cloudinaryResult = await uploadFileToCloudinary({
+        filePath: targetPath,
+        folder: cloudinaryFolder,
+        originalFilename: savedDoc.filename
+      });
+      
+      if (cloudinaryResult && cloudinaryResult.secure_url) {
+        cloudinaryUrl = cloudinaryResult.secure_url;
+        console.log('Manual upload file uploaded to Cloudinary successfully:', cloudinaryUrl);
+
+        // Update the document with the Cloudinary URL
+        savedDoc.storage = savedDoc.storage || {};
+        savedDoc.storage.fileUrl = cloudinaryUrl;
+        savedDoc.storage.cloudinaryPublicId = cloudinaryResult.public_id;
+        savedDoc.markModified('storage');
+        await savedDoc.save();
+        console.log('Manual upload document updated with Cloudinary URL:', cloudinaryUrl);
+      } else {
+        console.log('Cloudinary not configured, using local storage URL for manual upload');
+      }
+    } catch (cloudinaryErr) {
+      console.error('Cloudinary upload for manual upload failed (non-blocking):', cloudinaryErr && (cloudinaryErr.message || cloudinaryErr));
+      // Continue with local storage URL if Cloudinary upload fails
+    }
+
     await maybeSyncDocumentToGoogleDrive({
       req,
       savedDoc,
@@ -1320,7 +1499,10 @@ app.post('/api/folders/upload', authMiddleware, upload.single('file'), async (re
       docType: docTypePath || documentType,
     });
 
-    return res.json(buildUploadSuccessResponse({ savedDoc, result: manualResult }));
+    // Reload document from DB to get latest state with Cloudinary URL
+    const reloadedDoc = await Document.findById(savedDoc._id);
+
+    return res.json(buildUploadSuccessResponse({ savedDoc: reloadedDoc || savedDoc, result: manualResult }));
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Manual folder upload failed' });
   }
@@ -1353,7 +1535,90 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
       }
     }
 
-    console.log('Processing file:', originalPath);
+    // Verify file exists and has content
+    try {
+      const fileStats = fs.statSync(originalPath);
+      if (fileStats.size === 0) {
+        console.error('File upload resulted in empty file:', originalPath);
+        return res.status(400).json({ error: 'File is empty after upload. Please try again.' });
+      }
+      console.log('File verified: size =', fileStats.size, 'bytes');
+
+      // For JPG/PNG/WebP files, verify magic bytes and fix extension if needed
+      if ((ext === '.jpg' || ext === '.jpeg' || ext === '.png' || ext === '.webp') && fileStats.size > 0) {
+        const buf = Buffer.alloc(12); // Need 12 bytes for RIFF+WEBP check
+        const fd = fs.openSync(originalPath, 'r');
+        fs.readSync(fd, buf, 0, 12, 0);
+        fs.closeSync(fd);
+
+        const isValidJpeg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+        const isValidPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+        // WebP: RIFF signature (52 49 46 46) followed by WEBP (57 45 42 50) at offset 8
+        const isValidWebp = buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+                           buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50;
+
+        let detectedFormat = null;
+        let shouldRename = false;
+
+        if (isValidWebp) {
+          detectedFormat = '.webp';
+          if (ext !== '.webp') {
+            console.log('WebP format detected, but file has', ext, 'extension - will rename');
+            shouldRename = true;
+          }
+        } else if (isValidPng) {
+          detectedFormat = '.png';
+          if (ext !== '.png') {
+            console.log('PNG format detected, but file has', ext, 'extension - will rename');
+            shouldRename = true;
+          }
+        } else if (isValidJpeg) {
+          detectedFormat = '.jpg';
+          if (ext !== '.jpg' && ext !== '.jpeg') {
+            console.log('JPEG format detected, but file has', ext, 'extension - will rename');
+            shouldRename = true;
+          }
+        }
+
+        // If actual format doesn't match extension, rename the file
+        if (shouldRename && detectedFormat) {
+          const newPath = originalPath.replace(/\.[a-z]+$/i, detectedFormat);
+          console.log('Renaming file from', originalPath, 'to', newPath);
+          await safeMoveFile(originalPath, newPath);
+          originalPath = newPath;
+          // Update ext for downstream processing
+          ext = detectedFormat;
+        }
+
+        // Validate the final format
+        if (ext === '.jpg' || ext === '.jpeg') {
+          if (!isValidJpeg && !isValidWebp) {
+            console.error('JPG file has invalid magic bytes:', buf.slice(0, 4), 'file:', originalPath);
+            return res.status(400).json({ error: 'Uploaded JPG file is invalid or corrupted. Please try again.' });
+          }
+          console.log('JPG validation passed');
+        } else if (ext === '.png') {
+          if (!isValidPng) {
+            console.error('PNG file has invalid magic bytes:', buf.slice(0, 4), 'file:', originalPath);
+            return res.status(400).json({ error: 'Uploaded PNG file is invalid or corrupted. Please try again.' });
+          }
+          console.log('PNG validation passed');
+        } else if (ext === '.webp') {
+          if (!isValidWebp) {
+            console.error('WebP file has invalid magic bytes:', buf.slice(0, 4), 'file:', originalPath);
+            return res.status(400).json({ error: 'Uploaded WebP file is invalid or corrupted. Please try again.' });
+          }
+          console.log('WebP validation passed');
+        }
+      }
+    } catch (validateErr) {
+      console.error('File validation error:', validateErr && (validateErr.message || validateErr));
+      return res.status(400).json({ error: 'File validation failed. Please try again.' });
+    }
+
+    // Re-read actual extension after potential rename
+    const actualExt = path.extname(originalPath).toLowerCase();
+    console.log('Processing file:', originalPath, 'with extension:', actualExt);
 
     // prepare list of image paths to process (single image by default)
     let processingPaths = [originalPath];
@@ -1378,6 +1643,7 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
 
       let pdfVisionResult = null;
       let lastVisionUnknown = null;
+      let lastPdfVisionError = null;
 
       for (const p of processingPaths) {
         try {
@@ -1414,8 +1680,16 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
             ...(visionRes || {})
           };
         } catch (vErr) {
+          lastPdfVisionError = vErr && (vErr.message || String(vErr));
           console.error('Vision LLM failed for PDF page', p, vErr && (vErr.message || vErr));
         }
+      }
+
+      if (!pdfVisionResult) {
+        console.warn('PDF Vision flow did not produce a confident result', {
+          pagesTried: processingPaths.length,
+          lastPdfVisionError,
+        });
       }
 
       const finalPdfResult = pdfVisionResult || lastVisionUnknown || {
@@ -1473,95 +1747,111 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
 
     console.log('Processing', processingPaths.length, 'page(s) sequentially (ML -> Vision LLM fallback)...');
 
-    // Process pages in order: ML first, then Vision LLM for that page if ML confidence is low.
+    // Process pages in order: 
+    // - For images: Try ML first (if confidence >= 97%, accept; else try Vision LLM)
+    // - For PDFs: Skip ML, go straight to Vision LLM
     let finalResult = null;
+    let lastMlError = null;
+    let lastVisionError = null;
+    
+    // Determine if we should try ML for this file type
+    const isImage = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext.toLowerCase());
+    const skipMl = ext === '.pdf'; // PDFs always skip ML, go straight to Vision LLM
+    
     for (const p of processingPaths) {
-      try {
-        // ML analysis
-        const mlResponse = await axios.post(
-          ML_SERVICE_URL,
-          { file_path: p },
-          { timeout: 30000 }
-        );
-        console.log('ML Success for', p, mlResponse.data);
-        const predictedClass = mlResponse.data.class || mlResponse.data['class'];
-        const confidenceRaw = parseFloat(mlResponse.data.confidence || 0);
-        const confidencePercent = normalizeConfidencePercent(confidenceRaw);
+      let mlSucceeded = false;
+      let mlConfidenceHigh = false;
+      
+      // PHASE 1: Try ML only for images (not PDFs)
+      if (isImage && !skipMl) {
+        try {
+          console.log('Attempting ML service on', p);
+          const { response: mlResponse, endpoint: mlEndpoint } = await callMlService(p);
+          mlSucceeded = true;
+          console.log('ML endpoint used:', mlEndpoint);
+          console.log('ML Success for', p, mlResponse.data);
+          const predictedClass = mlResponse.data.class || mlResponse.data['class'];
+          const confidenceRaw = parseFloat(mlResponse.data.confidence || 0);
+          const confidencePercent = normalizeConfidencePercent(confidenceRaw);
 
-        if (confidencePercent >= CONFIDENCE_THRESHOLD_PERCENT) {
-          // Good ML result — accept and return
-          console.log('ML HIGH CONFIDENCE -> RETURNING ML Result for', p);
-          finalResult = {
-            document_type: predictedClass || 'Unknown',
-            folder: cleanFolderName(predictedClass),
-            category: deriveCategory({ document_type: predictedClass, folder: cleanFolderName(predictedClass) }),
-            accuracy: confidencePercent,
-            confidence: confidencePercent,
-            method: 'ML',
-            extracted_text: '',
-            key_fields: {}
-          };
-          finalResult.processing_time_ms = Date.now() - uploadStartTs;
-        } else {
-          // ML low confidence — try Vision LLM for this page
-          console.log('ML low confidence (', confidenceRaw, ') — invoking Vision LLM on', p);
-          try {
-            const visionRes = await analyzeImageWithLLM(p);
-            console.log('Vision LLM result for', p, visionRes);
-            // decide whether vision result is meaningful
-            const llmDocType = getDocTypeFromVisionResult(visionRes);
-            if (!isUnknownDocType(llmDocType)) {
-              finalResult = {
+          if (confidencePercent >= CONFIDENCE_THRESHOLD_PERCENT) {
+            // HIGH CONFIDENCE: Use ML result
+            mlConfidenceHigh = true;
+            console.log('ML HIGH CONFIDENCE (', confidencePercent, '%) -> ACCEPTING ML Result for', p);
+            finalResult = {
+              document_type: predictedClass || 'Unknown',
+              folder: cleanFolderName(predictedClass),
+              category: deriveCategory({ document_type: predictedClass, folder: cleanFolderName(predictedClass) }),
+              accuracy: confidencePercent,
+              confidence: confidencePercent,
+              method: 'ML',
+              extracted_text: '',
+              key_fields: {}
+            };
+            finalResult.processing_time_ms = Date.now() - uploadStartTs;
+          } else {
+            // LOW CONFIDENCE: Will try Vision LLM next
+            console.log('ML low confidence (', confidencePercent, '%) - will try Vision LLM instead');
+            mlSucceeded = false; // Treat low confidence as ML failure
+          }
+        } catch (mlErr) {
+          mlSucceeded = false;
+          lastMlError = mlErr?.response?.data || mlErr.message || String(mlErr);
+          console.warn('ML service failed for', p, ':', lastMlError, '— will try Vision LLM instead');
+        }
+      } else if (skipMl) {
+        console.log('PDF detected - skipping ML, going straight to Vision LLM');
+      }
+
+      // PHASE 2: Try Vision LLM if ML didn't provide high confidence result
+      if (!mlConfidenceHigh) {
+        console.log('Invoking Vision LLM on', p);
+        try {
+          const visionRes = await analyzeImageWithLLM(p);
+          console.log('Vision LLM result for', p, visionRes);
+          // decide whether vision result is meaningful
+          const llmDocType = getDocTypeFromVisionResult(visionRes);
+          if (!isUnknownDocType(llmDocType)) {
+            finalResult = {
+              ...(visionRes || {}),
+              document_type: llmDocType,
+              folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType),
+              category: deriveCategory({
                 ...(visionRes || {}),
                 document_type: llmDocType,
-                folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType),
-                category: deriveCategory({
-                  ...(visionRes || {}),
-                  document_type: llmDocType,
-                  folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType)
-                }),
-                accuracy: (visionRes && (visionRes.accuracy ?? visionRes.confidence)) || 0,
-                confidence: (visionRes && visionRes.confidence) || 0,
-                method: 'Vision LLM'
-              };
-              finalResult.processing_time_ms = Date.now() - uploadStartTs;
-              finalResult.accuracy = normalizeConfidencePercent(finalResult.accuracy);
-              finalResult.confidence = normalizeConfidencePercent(finalResult.confidence);
-              if (!finalResult.confidence && finalResult.accuracy) {
-                finalResult.confidence = finalResult.accuracy;
-              }
-            } else {
-              console.log('Vision LLM returned unknown for', p, ' — continuing to next page');
+                folder: (visionRes && visionRes.folder) || cleanFolderName(llmDocType)
+              }),
+              accuracy: (visionRes && (visionRes.accuracy ?? visionRes.confidence)) || 0,
+              confidence: (visionRes && visionRes.confidence) || 0,
+              method: 'Vision LLM'
+            };
+            finalResult.processing_time_ms = Date.now() - uploadStartTs;
+            finalResult.accuracy = normalizeConfidencePercent(finalResult.accuracy);
+            finalResult.confidence = normalizeConfidencePercent(finalResult.confidence);
+            if (!finalResult.confidence && finalResult.accuracy) {
+              finalResult.confidence = finalResult.accuracy;
             }
-          } catch (vErr) {
-            console.error('Vision LLM failed for', p, vErr && (vErr.message || vErr));
+          } else {
+            console.log('Vision LLM returned unknown for', p, ' — continuing to next page');
           }
+        } catch (vErr) {
+          lastVisionError = vErr && (vErr.message || String(vErr));
+          console.error('Vision LLM failed for', p, vErr && (vErr.message || vErr));
         }
+      }
 
-        // If we have a finalResult from either ML or Vision LLM, persist the original and return
-        if (finalResult) {
-          const target = createStorageTarget({ userId: req.userId, result: finalResult, filename: req.file.originalname });
-          const { targetDir, targetPath } = target;
-          try {
-            if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-            await safeMoveFile(originalPath, targetPath);
-            const savedDoc = await persistAndNotify({
-              req,
-              result: finalResult,
-              filePath: targetPath
-            });
-
-            // schedule cleanup of temporary images
-            cleanupFiles(tempImages);
-            for (const img of tempImages) {
-              try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
-            }
-
-            return res.json(buildUploadSuccessResponse({ savedDoc, result: finalResult }));
-          } catch (e) {
-            console.error('Failed to move original file to storage:', e.message || e);
-            try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
-          }
+      // If we have a finalResult from either ML or Vision LLM, persist the original and return
+      if (finalResult) {
+        const target = createStorageTarget({ userId: req.userId, result: finalResult, filename: req.file.originalname });
+        const { targetDir, targetPath } = target;
+        try {
+          if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+          await safeMoveFile(originalPath, targetPath);
+          const savedDoc = await persistAndNotify({
+            req,
+            result: finalResult,
+            filePath: targetPath
+          });
 
           // schedule cleanup of temporary images
           cleanupFiles(tempImages);
@@ -1569,11 +1859,19 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
             try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
           }
 
-          return res.status(500).json({ error: 'Failed to store processed file' });
+          return res.json(buildUploadSuccessResponse({ savedDoc, result: finalResult }));
+        } catch (e) {
+          console.error('Failed to move original file to storage:', e.message || e);
+          try { cleanup.enqueueMove(originalPath, targetPath); } catch (ee) { console.error('enqueueMove failed', ee && ee.message); }
         }
-      } catch (e) {
-        console.error('ML request failed for', p, e?.response?.data || e.message || e);
-        // continue to next page — do not abort entire request for single-page ML error
+
+        // schedule cleanup of temporary images
+        cleanupFiles(tempImages);
+        for (const img of tempImages) {
+          try { if (fs.existsSync(img)) cleanup.enqueueDelete(img); } catch (e) { console.error('enqueueDelete failed for', img, e && e.message); }
+        }
+
+        return res.status(500).json({ error: 'Failed to store processed file' });
       }
     }
 
@@ -1597,6 +1895,14 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
 
     // No page produced a confident ML/LLM result. Final fallback: move original to Other/Unknown and return Unknown.
     try {
+      console.warn('Final fallback reached: no confident ML/LLM result', {
+        file: originalPath,
+        ext,
+        pagesTried: processingPaths.length,
+        mlServiceUrls: ML_SERVICE_URLS,
+        lastMlError,
+        lastVisionError,
+      });
       const fallbackResult = {
         document_type: 'Unknown',
         category: 'Other',
@@ -1657,8 +1963,10 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
   }
 });
 
-app.listen(5000, () => {
-  console.log('Backend running on port 5000');
+const PORT = Number(process.env.PORT || 5000);
+
+app.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
   startWeeklySummaryJob();
   connectDB()
     .then(() => backfillClerkUsersToMongo())

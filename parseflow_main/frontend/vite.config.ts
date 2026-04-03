@@ -4,26 +4,50 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
-  server: {
-    host: true,
-    port: 5173,
-    strictPort: true,
-    hmr: {
-      host: "10.0.111.131",
-      port: 5173,
-      protocol: "ws",
-      overlay: false,
+export default defineConfig(({ mode }) => {
+  return {
+    server: {
+      host: true,
+      proxy: {
+        '/api': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/upload': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/files': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/notifications': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/documents': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/docbot': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+        '/auth': {
+          target: 'http://backend:5000',
+          changeOrigin: true,
+        },
+      },
     },
-  },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+    plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+      },
+      dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
     },
-    dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
-  },
-  build: {
-    outDir: "dist",
-  },
-}));
+    build: {
+      outDir: "dist",
+    },
+  };
+});

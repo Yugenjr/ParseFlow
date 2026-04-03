@@ -5,6 +5,7 @@ async function authMiddleware(req, res, next) {
     const headerUserId = req.headers['x-user-id'];
     if (headerUserId) {
       req.userId = String(headerUserId);
+      req.user = { id: req.userId };
       req.userEmail = null;
       req.authPayload = null;
       return next();
@@ -22,6 +23,7 @@ async function authMiddleware(req, res, next) {
     });
 
     req.userId = payload.sub;
+    req.user = { id: req.userId };
     req.userEmail = payload.email || payload.email_address || null;
     req.authPayload = payload;
 

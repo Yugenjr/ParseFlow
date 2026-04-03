@@ -1,0 +1,39 @@
+services:
+  ml:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    env_file:
+      - ./ml-service/.env.docker
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./storage:/app/storage
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      - ml
+    env_file:
+      - ./backend/.env
+      - ./backend/.env.docker
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./storage:/app/storage
+      - ./backend/uploads:/app/backend/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    env_file:
+      - ./frontend/.env
+      - ./frontend/.env.docker
+    ports:
+      - "3000:3000"

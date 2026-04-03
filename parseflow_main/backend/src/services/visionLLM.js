@@ -1,5 +1,6 @@
 const axios = require("axios");
 const fs = require("fs");
+const path = require("path");
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
@@ -77,6 +78,16 @@ async function analyzeImageWithLLM(filePath) {
   try {
     const imageBase64 = fs.readFileSync(filePath, { encoding: "base64" });
 
+    // Detect image format from file extension
+    const ext = path.extname(filePath).toLowerCase();
+    let mimeType = 'image/jpeg'; // default
+    if (ext === '.png') {
+      mimeType = 'image/png';
+    } else if (ext === '.webp') {
+      mimeType = 'image/webp';
+    }
+    console.log(`[visionLLM] Processing ${ext} file as ${mimeType}, size: ${imageBase64.length} chars`);
+
     const payload = {
       model: "meta-llama/llama-4-scout-17b-16e-instruct",
       messages: [
@@ -85,7 +96,7 @@ async function analyzeImageWithLLM(filePath) {
           role: "user",
           content: [
             { type: "text", text: "Analyze this document image and return JSON." },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } }
           ]
         }
       ],

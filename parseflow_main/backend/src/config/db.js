@@ -18,6 +18,8 @@ async function connectDB() {
     await User.createCollection();
     const Document = require('../models/Document');
     await Document.createCollection();
+    const File = require('../models/File');
+    await File.createCollection();
   } catch (err) {
     // Ignore "already exists" and continue startup.
     if (!String(err && err.message).toLowerCase().includes('already exists')) {
