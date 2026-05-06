@@ -1,20 +1,17 @@
+# Base image with Python 3.10
 FROM python:3.10-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
+# Set working directory
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
-
+# Copy files
 COPY . .
 
-EXPOSE 8001
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "ml_api.py"]
+# Expose port
+EXPOSE 10000
+
+# Run app using gunicorn
+CMD ["gunicorn", "ml_api:app", "--bind", "0.0.0.0:10000"]

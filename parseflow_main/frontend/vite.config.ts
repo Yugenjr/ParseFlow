@@ -8,6 +8,12 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       host: true,
+      allowedHosts: [
+        "parseflow-app-bqfj.onrender.com",
+        "parseflow-frontend.onrender.com",
+        "localhost",
+        "127.0.0.1",
+      ],
       proxy: {
         '/api': {
           target: 'http://backend:5000',
