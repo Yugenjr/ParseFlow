@@ -6,7 +6,7 @@ services:
     env_file:
       - ./ml-service/.env.docker
     ports:
-      - "10000:10000"
+      - "8001:8001"
     volumes:
       - ./backend/uploads:/app/backend/uploads
       - ./storage:/app/storage

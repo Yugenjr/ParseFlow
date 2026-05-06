@@ -11,7 +11,7 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose port
-EXPOSE 10000
+EXPOSE 8001
 
 # Run app using gunicorn
-CMD ["gunicorn", "ml_api:app", "--bind", "0.0.0.0:10000"]
+CMD ["gunicorn", "ml_api:app", "--bind", "0.0.0.0:8001"]
