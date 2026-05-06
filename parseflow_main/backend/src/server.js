@@ -123,7 +123,7 @@ async function safeMoveFile(src, dest) {
   }
 }
 
-const ML_SERVICE_BASE_URL = (process.env.ML_API_URL || 'http://localhost:8001').replace(/\/+$/, '');
+const ML_SERVICE_BASE_URL = (process.env.ML_API_URL || 'https://parseflow.onrender.com').replace(/\/+$/, '');
 const ML_SERVICE_URLS = ML_SERVICE_BASE_URL.endsWith('/predict')
   ? [ML_SERVICE_BASE_URL]
   : [`${ML_SERVICE_BASE_URL}/predict`, ML_SERVICE_BASE_URL];
