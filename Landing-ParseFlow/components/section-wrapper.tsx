@@ -7,9 +7,10 @@ interface SectionWrapperProps {
   children: React.ReactNode
   className?: string
   id?: string
+  contentClassName?: string
 }
 
-export function SectionWrapper({ children, className, id }: SectionWrapperProps) {
+export function SectionWrapper({ children, className, id, contentClassName }: SectionWrapperProps) {
   return (
     <motion.section
       id={id}
@@ -19,7 +20,7 @@ export function SectionWrapper({ children, className, id }: SectionWrapperProps)
       viewport={{ once: true, margin: "-100px" }}
       transition={{ duration: 0.5, ease: "easeOut" }}
     >
-      <div className="max-w-7xl mx-auto">
+      <div className={cn("relative z-10 mx-auto w-full max-w-7xl", contentClassName)}>
         {children}
       </div>
     </motion.section>

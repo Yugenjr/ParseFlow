@@ -119,8 +119,20 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    scroll-behavior: smooth;
+  }
   body {
     @apply bg-background text-foreground;
+    background:
+      radial-gradient(circle at top left, rgba(199, 184, 255, 0.18), transparent 28%),
+      radial-gradient(circle at 85% 15%, rgba(59, 130, 246, 0.12), transparent 25%),
+      linear-gradient(180deg, #fcfcfc 0%, #f7f7f7 60%, #f2f2f2 100%);
+  }
+
+  ::selection {
+    background: rgba(0, 0, 0, 0.92);
+    color: #fff;
   }
 }
 

@@ -45,7 +45,11 @@ const itemVariants = {
 
 export function ProblemSection() {
   return (
-    <SectionWrapper className="bg-foreground text-background">
+    <SectionWrapper
+      id="problem"
+      className="bg-foreground text-background"
+      contentClassName="bg-background text-foreground border-3 border-foreground shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] p-6 md:p-10"
+    >
       <div className="text-center mb-12">
         <motion.span 
           className="inline-block bg-primary text-primary-foreground px-4 py-1 font-bold text-sm mb-4 border-3 border-background"
