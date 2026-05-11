@@ -7,7 +7,7 @@ import { SectionWrapper } from "../section-wrapper"
 
 export function CTASection() {
   return (
-    <SectionWrapper className="bg-primary">
+    <SectionWrapper id="cta" className="bg-primary" contentClassName="bg-background text-foreground border-3 border-foreground shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] p-6 md:p-10">
       <motion.div 
         className="text-center max-w-3xl mx-auto"
         initial={{ opacity: 0, scale: 0.95 }}

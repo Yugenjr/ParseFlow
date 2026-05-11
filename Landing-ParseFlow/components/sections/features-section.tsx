@@ -55,7 +55,11 @@ const itemVariants = {
 
 export function FeaturesSection() {
   return (
-    <SectionWrapper id="features" className="bg-muted">
+    <SectionWrapper
+      id="features"
+      className="bg-muted"
+      contentClassName="bg-card border-3 border-foreground shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] p-6 md:p-10"
+    >
       <div className="text-center mb-12">
         <motion.span 
           className="inline-block bg-foreground text-background px-4 py-1 font-bold text-sm mb-4"

@@ -56,7 +56,7 @@ export function Footer() {
             {["Twitter", "LinkedIn", "GitHub"].map((social) => (
               <motion.a
                 key={social}
-                href="#"
+                href={social === "GitHub" ? "https://github.com/Yugenjr/ParseFlow" : "#"}
                 className="text-background/70 hover:text-primary transition-colors duration-200 text-sm font-bold"
                 whileHover={{ scale: 1.05 }}
               >

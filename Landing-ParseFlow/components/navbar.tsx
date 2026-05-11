@@ -42,7 +42,7 @@ export function Navbar() {
                 {link.name}
               </motion.a>
             ))}
-            <BrutalButton size="sm">Try It Now</BrutalButton>
+            <BrutalButton size="sm" href="#cta">Try It Now</BrutalButton>
           </div>
 
           {/* Mobile Menu Button */}
@@ -77,7 +77,7 @@ export function Navbar() {
                   {link.name}
                 </a>
               ))}
-              <BrutalButton size="sm" className="w-full">Try It Now</BrutalButton>
+              <BrutalButton size="sm" href="#cta" className="w-full">Try It Now</BrutalButton>
             </div>
           </motion.div>
         )}
