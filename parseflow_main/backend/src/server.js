@@ -16,6 +16,7 @@ const authMiddleware = require('./middleware/authMiddleware');
 const { encrypt } = require('./utils/encryption');
 const { generateFileHash } = require('./utils/hash');
 const { uploadFileToCloudinary } = require('./utils/cloudinaryUpload');
+const cloudinary = require('./config/cloudinary');
 const { analyzeImageWithLLM } = require('./services/visionLLM');
 const { askGuideBot } = require('./services/guidebotService');
 const { convertPdfToImages, cleanupFiles } = require('./services/pdfService');
@@ -518,10 +519,37 @@ function makeFileUrl(filePathAbs) {
 }
 
 function getFileUrl(doc) {
-  // Prefer Cloudinary URL if available, otherwise fall back to local file URL
-  if (doc.storage && doc.storage.fileUrl && /^https?:\/\//.test(doc.storage.fileUrl)) {
-    return doc.storage.fileUrl;
+  // Prefer a Cloudinary-delivered viewer URL when we have a Cloudinary public id
+  try {
+    const publicId = doc && doc.storage && doc.storage.cloudinaryPublicId;
+    const filename = doc && (doc.filename || (doc.storage && doc.storage.filePath && require('path').basename(doc.storage.filePath)) || '');
+    const ext = (filename && require('path').extname(filename).toLowerCase()) || '';
+    const isPdf = ext === '.pdf';
+    if (publicId) {
+      // Use 'raw' resource type for PDFs so we get the original PDF URL
+      const opts = { resource_type: isPdf ? 'raw' : 'image', type: 'upload', secure: true };
+      try {
+        const url = cloudinary.url(publicId, opts);
+        if (url) return url;
+      } catch (e) {
+        console.warn('getFileUrl: cloudinary.url failed', e && (e.message || e));
+      }
+    }
+  } catch (e) {
+    console.warn('getFileUrl: failed to build Cloudinary URL from public id', e && (e.message || e));
   }
+
+  // If a full URL was stored, prefer it but strip any fl_attachment flag that forces download
+  if (doc.storage && doc.storage.fileUrl && /^https?:\/\//.test(doc.storage.fileUrl)) {
+    try {
+      // remove any /fl_attachment or /fl_attachment:<name> component in the transformations segment
+      const cleaned = doc.storage.fileUrl.replace(/\/(fl_attachment(:[^\/]+)?)(,|\/)/g, '/');
+      return cleaned;
+    } catch (e) {
+      return doc.storage.fileUrl;
+    }
+  }
+
   // Fall back to local file URL
   return makeFileUrl(doc.filePath);
 }

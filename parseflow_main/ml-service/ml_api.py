@@ -4,13 +4,10 @@ import traceback
 from PIL import Image
 import numpy as np
 import tensorflow as tf
-
 app = Flask(__name__)
-
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # More defensive JSON parsing with detailed logging
         try:
             data = request.get_json(force=True)
         except Exception as json_err:
@@ -22,8 +19,6 @@ def predict():
         debug = bool(data.get('debug', False))
         if not file_path:
             return jsonify({'error': 'file_path required'}), 400
-
-        # Normalize Windows paths (convert backslashes to forward slashes)
         file_path = file_path.replace('\\', '/')
         
         # Accept absolute or relative paths

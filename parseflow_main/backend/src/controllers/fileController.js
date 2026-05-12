@@ -28,19 +28,24 @@ async function getUserObjectId(req) {
 }
 
 function uploadBufferToCloudinary({ buffer, folder, originalname, mimetype }) {
-  const isPdf = mimetype === 'application/pdf';
   const publicId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   return new Promise((resolve, reject) => {
+    const uploadOpts = {
+      folder,
+      public_id: publicId,
+      use_filename: false,
+      unique_filename: false,
+      overwrite: false,
+    };
+
+    // Determine resource type from original filename/mimetype
+    const ext = (originalname && require('path').extname(originalname).toLowerCase()) || '';
+    const isPdf = ext === '.pdf' || String(mimetype || '').toLowerCase() === 'application/pdf';
+    uploadOpts.resource_type = isPdf ? 'raw' : 'image';
+
     const stream = cloudinary.uploader.upload_stream(
-      {
-        folder,
-        public_id: publicId,
-        resource_type: isPdf ? 'raw' : 'image',
-        use_filename: false,
-        unique_filename: false,
-        overwrite: false,
-      },
+      uploadOpts,
       (error, result) => {
         if (error) {
           reject(error);
