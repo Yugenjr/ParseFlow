@@ -36,11 +36,6 @@ function resolveDocumentUrl(fileUrl: string): string {
   return `${import.meta.env.VITE_API_URL}${fileUrl}`;
 }
 
-function openDocumentViewer(doc: BackendDocument) {
-  if (!doc.fileUrl) return;
-  const sourceUrl = resolveDocumentUrl(doc.fileUrl);
-  window.open(sourceUrl, '_blank', 'noopener,noreferrer');
-}
 
 const CUSTOM_FOLDERS_KEY = "parseflow_custom_folders";
 
@@ -78,6 +73,19 @@ export default function DocumentsPage() {
       await wait(250);
     }
     return null;
+  };
+
+  const openDocumentViewer = async (doc: BackendDocument) => {
+    if (!doc.fileUrl) return;
+    const sourceUrl = resolveDocumentUrl(doc.fileUrl);
+    const basePreview = `${import.meta.env.VITE_API_URL || ''}/api/documents/preview?url=${encodeURIComponent(sourceUrl)}`;
+    try {
+      const token = await getReliableToken();
+      const previewUrl = token ? `${basePreview}&token=${encodeURIComponent(token)}` : basePreview;
+      window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      window.open(sourceUrl, '_blank', 'noopener,noreferrer');
+    }
   };
 
   useEffect(() => {

@@ -37,15 +37,23 @@ async function uploadFileToCloudinary({ filePath, folder, originalFilename }) {
     console.log('File extension:', fileExtension, 'Is PDF:', isPdf);
     console.log('Public ID:', publicId);
 
+    const uploadOpts = {
+      folder,
+      public_id: publicId,
+      use_filename: false,
+      unique_filename: false,
+      overwrite: false,
+    };
+
+    // For PDFs, upload as 'raw' so Cloudinary preserves the original PDF asset
+    if (isPdf) {
+      uploadOpts.resource_type = 'raw';
+    } else {
+      uploadOpts.resource_type = 'image';
+    }
+
     const stream = cloudinary.uploader.upload_stream(
-      {
-        folder,
-        public_id: publicId,
-        resource_type: isPdf ? 'raw' : 'image',
-        use_filename: false,
-        unique_filename: false,
-        overwrite: false,
-      },
+      uploadOpts,
       (error, result) => {
         if (error) {
           console.error('❌ Cloudinary upload error:', error.message || error);

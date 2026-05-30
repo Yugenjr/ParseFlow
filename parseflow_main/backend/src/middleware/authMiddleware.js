@@ -12,7 +12,12 @@ async function authMiddleware(req, res, next) {
     }
 
     const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    let token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    // Allow token via query parameter for preview proxy (use carefully)
+    if (!token && req.query && req.query.token) {
+      token = String(req.query.token || '').trim();
+    }
 
     if (!token) {
       return res.status(401).json({ error: 'No token' });
