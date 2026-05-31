@@ -57,6 +57,7 @@ flowchart TD
 ## Repository Layout
 
 ```
+docs/          # Product docs, usage, architecture, contribution, conduct
 parseflow_main/
   backend/     # Express API, classification orchestration, storage sync, notifications
   frontend/    # React/Vite UI
@@ -143,10 +144,6 @@ npm start
 
 ## Additional Documentation
 
-For full onboarding and operations details, see:
+For full onboarding and operations details, see [docs/README.md](docs/README.md).
 
-- [implementation guide.md](implementation%20guide.md)
-
-## Team
-
-Built for Agentica 2.0 Hackathon
+The docs folder includes product rationale, how to use ParseFlow, system architecture, flow diagrams, and community guidelines.
